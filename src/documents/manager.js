@@ -32,21 +32,7 @@ export class DocumentManager {
         }
       });
 
-      // Parse PDF
-      let parsedData;
-      try {
-        parsedData = await parsePDF(fileBuffer);
-      } catch (error) {
-        console.error('PDF parsing with pdfjs failed, trying fallback:', error);
-        const fallbackText = extractTextFallback(fileBuffer);
-        parsedData = {
-          pages: [{ pageNumber: 1, text: fallbackText }],
-          pageCount: 1,
-          metadata: {}
-        };
-      }
-
-      // Store document metadata
+      // Store document metadata WITHOUT text extraction
       await this.db.prepare(`
         INSERT INTO documents (
           id, filename, original_filename, content_type, file_size,
@@ -63,36 +49,21 @@ export class DocumentManager {
         metadata.category || 'general',
         JSON.stringify(metadata.tags || []),
         r2Key,
-        parsedData.pageCount,
-        'processed'
+        1, // Default page count
+        'uploaded' // Status: uploaded but not processed
       ).run();
 
-      // Store page content (already sanitized by parser)
-      for (const page of parsedData.pages) {
-        if (!page.text || page.text.length === 0) continue;
-
-        await this.db.prepare(`
-          INSERT INTO document_pages (document_id, page_number, content)
-          VALUES (?, ?, ?)
-        `).bind(documentId, page.pageNumber, page.text).run();
-
-        // Store chunks for better search
-        const chunks = chunkText(page.text);
-        for (let i = 0; i < chunks.length; i++) {
-          if (chunks[i] && chunks[i].trim().length > 0) {
-            await this.db.prepare(`
-              INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
-              VALUES (?, ?, ?, ?)
-            `).bind(documentId, page.pageNumber, chunks[i].trim(), i).run();
-          }
-        }
-      }
+      // Store a simple placeholder in document_pages
+      await this.db.prepare(`
+        INSERT INTO document_pages (document_id, page_number, content)
+        VALUES (?, ?, ?)
+      `).bind(documentId, 1, `Document: ${metadata.filename} (text extraction pending)`).run();
 
       return {
         id: documentId,
         filename: metadata.filename,
-        pageCount: parsedData.pageCount,
-        status: 'processed'
+        pageCount: 1,
+        status: 'uploaded'
       };
 
     } catch (error) {
