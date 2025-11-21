@@ -202,6 +202,41 @@ export default {
       }
     }
 
+    // Get document as structured JSON (enhanced v2.0 format)
+    if (url.pathname.match(/^\/documents\/[^\/]+\/json$/) && request.method === 'GET') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const documentId = url.pathname.split('/')[2];
+        const document = await documentManager.getDocumentJSON(documentId);
+
+        return new Response(JSON.stringify(document), {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Content-Disposition': `attachment; filename="${document.metadata.title || 'document'}.json"`
+          },
+        });
+
+      } catch (error) {
+        console.error('Get JSON error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to get document',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Process document endpoint (extract text from uploaded PDF)
     if (url.pathname.match(/^\/documents\/[^\/]+\/process$/) && request.method === 'POST') {
       if (!documentManager) {

@@ -1,12 +1,14 @@
-import { parsePDF, extractTextFallback, chunkText } from './parser.js';
+import { DocumentParser } from './parsers/index.js';
 
 /**
  * Document Manager - handles document upload, storage, and retrieval
+ * Version 2.0 - Enhanced with structured JSON parsing
  */
 export class DocumentManager {
   constructor(r2Bucket, database) {
     this.r2 = r2Bucket;
     this.db = database;
+    this.parser = new DocumentParser();
     this.initialized = this.initialize();
   }
 
@@ -25,7 +27,16 @@ export class DocumentManager {
           tags TEXT,
           r2_key TEXT NOT NULL,
           page_count INTEGER,
-          status TEXT DEFAULT 'processed'
+          status TEXT DEFAULT 'processed',
+
+          format TEXT,
+          language TEXT,
+          parsed_metadata TEXT,
+          parsed_structure TEXT,
+          parser_version TEXT,
+          parse_timestamp TEXT,
+          word_count INTEGER,
+          character_count INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS document_pages (
@@ -33,6 +44,7 @@ export class DocumentManager {
           document_id TEXT NOT NULL,
           page_number INTEGER NOT NULL,
           content TEXT NOT NULL,
+          page_metadata TEXT,
           FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
 
@@ -161,9 +173,10 @@ export class DocumentManager {
   }
 
   /**
-   * Process an uploaded document to extract text
+   * Process an uploaded document to extract text and structure
+   * Version 2.0 - Uses enhanced parser with structured JSON output
    * @param {string} documentId
-   * @returns {Promise<{id: string, filename: string, pageCount: number, status: string}>}
+   * @returns {Promise<{id: string, filename: string, pageCount: number, status: string, format: string}>}
    */
   async processDocument(documentId) {
     await this.initialized;
@@ -180,12 +193,16 @@ export class DocumentManager {
       // Get the file from R2
       const fileBuffer = await this.getDocumentFile(documentId);
 
-      // Parse PDF with text extraction
+      // Parse document with enhanced parser
       let parsedData;
       try {
-        parsedData = await parsePDF(fileBuffer);
+        parsedData = await this.parser.parse(fileBuffer, {
+          name: doc.filename,
+          type: doc.content_type,
+          size: doc.file_size
+        });
       } catch (error) {
-        console.error('PDF parsing failed:', error);
+        console.error('Document parsing failed:', error);
         // Mark as error
         await this.db.prepare(`
           UPDATE documents SET status = 'error' WHERE id = ?
@@ -202,37 +219,67 @@ export class DocumentManager {
         DELETE FROM document_chunks WHERE document_id = ?
       `).bind(documentId).run();
 
-      // Store extracted page content
+      // Store extracted page content with metadata
       for (const page of parsedData.pages) {
-        if (!page.text || page.text.length === 0) continue;
+        if (!page.content || page.content.length === 0) continue;
 
         await this.db.prepare(`
-          INSERT INTO document_pages (document_id, page_number, content)
-          VALUES (?, ?, ?)
-        `).bind(documentId, page.pageNumber, page.text).run();
+          INSERT INTO document_pages (document_id, page_number, content, page_metadata)
+          VALUES (?, ?, ?, ?)
+        `).bind(
+          documentId,
+          page.pageNumber,
+          page.content,
+          JSON.stringify(page.metadata || {})
+        ).run();
+      }
 
-        // Store chunks for better search
-        const chunks = chunkText(page.text);
-        for (let i = 0; i < chunks.length; i++) {
-          if (chunks[i] && chunks[i].trim().length > 0) {
-            await this.db.prepare(`
-              INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
-              VALUES (?, ?, ?, ?)
-            `).bind(documentId, page.pageNumber, chunks[i].trim(), i).run();
-          }
+      // Store pre-computed chunks for better search
+      const chunks = parsedData.chunks || [];
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunks[i] && chunks[i].trim().length > 0) {
+          await this.db.prepare(`
+            INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
+            VALUES (?, ?, ?, ?)
+          `).bind(documentId, null, chunks[i].trim(), i).run();
         }
       }
 
-      // Update document status to processed
+      // Update document with enhanced metadata
       await this.db.prepare(`
-        UPDATE documents SET status = 'processed', page_count = ? WHERE id = ?
-      `).bind(parsedData.pageCount, documentId).run();
+        UPDATE documents SET
+          status = 'processed',
+          page_count = ?,
+          format = ?,
+          language = ?,
+          parsed_metadata = ?,
+          parsed_structure = ?,
+          parser_version = ?,
+          parse_timestamp = ?,
+          word_count = ?,
+          character_count = ?
+        WHERE id = ?
+      `).bind(
+        parsedData.structure.pageCount,
+        parsedData.format || 'unknown',
+        parsedData.metadata.language || 'unknown',
+        JSON.stringify(parsedData.metadata),
+        JSON.stringify(parsedData.structure),
+        parsedData.parser?.version || '2.0',
+        parsedData.parseTimestamp || new Date().toISOString(),
+        parsedData.structure.wordCount || 0,
+        parsedData.structure.characterCount || 0,
+        documentId
+      ).run();
 
       return {
         id: documentId,
         filename: doc.filename,
-        pageCount: parsedData.pageCount,
-        status: 'processed'
+        pageCount: parsedData.structure.pageCount,
+        status: 'processed',
+        format: parsedData.format,
+        wordCount: parsedData.structure.wordCount,
+        language: parsedData.metadata.language
       };
 
     } catch (error) {
@@ -285,16 +332,67 @@ export class DocumentManager {
     }
 
     const pages = await this.db.prepare(`
-      SELECT page_number, content
+      SELECT page_number, content, page_metadata
       FROM document_pages
       WHERE document_id = ?
       ORDER BY page_number
     `).bind(documentId).all();
 
+    // Parse JSON fields
+    const parsedPages = (pages.results || []).map(page => ({
+      pageNumber: page.page_number,
+      content: page.content,
+      metadata: page.page_metadata ? JSON.parse(page.page_metadata) : {}
+    }));
+
     return {
       ...doc,
-      pages: pages.results || [],
-      tags: JSON.parse(doc.tags || '[]')
+      pages: parsedPages,
+      tags: JSON.parse(doc.tags || '[]'),
+      parsed_metadata: doc.parsed_metadata ? JSON.parse(doc.parsed_metadata) : null,
+      parsed_structure: doc.parsed_structure ? JSON.parse(doc.parsed_structure) : null
+    };
+  }
+
+  /**
+   * Get document as structured JSON (enhanced v2.0 format)
+   * @param {string} documentId
+   * @returns {Promise<ParsedDocument>}
+   */
+  async getDocumentJSON(documentId) {
+    await this.initialized;
+    const doc = await this.getDocument(documentId);
+
+    // Return structured format matching parser output
+    return {
+      id: doc.id,
+      format: doc.format || 'unknown',
+      metadata: doc.parsed_metadata || {
+        title: doc.filename,
+        author: null,
+        created: null,
+        modified: null,
+        language: doc.language || 'unknown',
+        size: doc.file_size,
+        contentType: doc.content_type
+      },
+      structure: doc.parsed_structure || {
+        pageCount: doc.page_count || 0,
+        wordCount: doc.word_count || 0,
+        characterCount: doc.character_count || 0,
+        sections: []
+      },
+      pages: doc.pages,
+      fullText: doc.pages.map(p => p.content).join('\n\n'),
+      uploadedAt: doc.uploaded_at,
+      uploadedBy: doc.uploaded_by,
+      category: doc.category,
+      tags: doc.tags,
+      status: doc.status,
+      parser: {
+        version: doc.parser_version || '1.0',
+        timestamp: doc.parse_timestamp
+      }
     };
   }
 
