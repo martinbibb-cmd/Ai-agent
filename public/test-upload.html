@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Test - Diagnostics</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #667eea;
+            white-space: pre-wrap;
+        }
+        .error {
+            border-left-color: red;
+            background: #fee;
+        }
+        .success {
+            border-left-color: green;
+            background: #efe;
+        }
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload Diagnostics</h1>
+    <p>This page will help identify what's wrong with uploads.</p>
+
+    <h2>Step 1: Test File Selection</h2>
+    <input type="file" id="fileInput" accept=".pdf,.txt,.json,.md,.csv,.xml,.html">
+    <div id="fileInfo" class="log"></div>
+
+    <h2>Step 2: Test Upload</h2>
+    <button id="uploadBtn" disabled>Upload File</button>
+    <div id="uploadLog" class="log"></div>
+
+    <h2>Step 3: Test FTS Health</h2>
+    <button id="ftsCheckBtn">Check FTS Status</button>
+    <div id="ftsLog" class="log"></div>
+
+    <h2>Step 4: Run FTS Migration</h2>
+    <button id="ftsMigrateBtn">Migrate FTS Index</button>
+    <div id="migrateLog" class="log"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8787';
+        let selectedFile = null;
+
+        // File selection test
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            selectedFile = file;
+            const info = `
+File Selected:
+  Name: ${file.name}
+  Size: ${file.size} bytes
+  Type: ${file.type || '(empty)'}
+  Extension: ${file.name.split('.').pop()}
+
+Validation:
+  Size OK: ${file.size <= 10 * 1024 * 1024}
+  Extension OK: ${/\.(pdf|txt|json|md|csv|xml|html)$/.test(file.name.toLowerCase())}
+            `.trim();
+
+            document.getElementById('fileInfo').textContent = info;
+            document.getElementById('fileInfo').className = 'log success';
+            document.getElementById('uploadBtn').disabled = false;
+        });
+
+        // Upload test
+        document.getElementById('uploadBtn').addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const log = document.getElementById('uploadLog');
+            log.textContent = 'Uploading...\n';
+            log.className = 'log';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                formData.append('category', 'test');
+
+                log.textContent += `Sending to: ${API_BASE}/documents/upload\n`;
+
+                const response = await fetch(`${API_BASE}/documents/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                log.textContent += `Status: ${response.status} ${response.statusText}\n`;
+
+                const result = await response.json();
+                log.textContent += `Response:\n${JSON.stringify(result, null, 2)}\n`;
+
+                if (result.success) {
+                    log.className = 'log success';
+                    log.textContent += `\n✓ Upload succeeded!\nDocument ID: ${result.document.id}\n`;
+                } else {
+                    log.className = 'log error';
+                    log.textContent += `\n✗ Upload failed: ${result.error}\n`;
+                }
+
+            } catch (error) {
+                log.className = 'log error';
+                log.textContent += `\n✗ Error: ${error.message}\n`;
+                console.error('Upload error:', error);
+            }
+        });
+
+        // FTS check
+        document.getElementById('ftsCheckBtn').addEventListener('click', async () => {
+            const log = document.getElementById('ftsLog');
+            log.textContent = 'Checking FTS status...\n';
+            log.className = 'log';
+
+            try {
+                // Try to list documents
+                const response = await fetch(`${API_BASE}/documents?limit=5`);
+                const result = await response.json();
+
+                log.textContent += `Status: ${response.status}\n`;
+                log.textContent += `Documents found: ${result.documents?.length || 0}\n`;
+                log.textContent += `Response:\n${JSON.stringify(result, null, 2)}\n`;
+
+                if (response.ok) {
+                    log.className = 'log success';
+                    log.textContent += '\n✓ API is responding correctly\n';
+                } else {
+                    log.className = 'log error';
+                    log.textContent += '\n✗ API error - may need FTS migration\n';
+                }
+
+            } catch (error) {
+                log.className = 'log error';
+                log.textContent += `\n✗ Error: ${error.message}\n`;
+            }
+        });
+
+        // FTS migration
+        document.getElementById('ftsMigrateBtn').addEventListener('click', async () => {
+            const log = document.getElementById('migrateLog');
+            log.textContent = 'Running FTS migration...\n';
+            log.className = 'log';
+
+            try {
+                const response = await fetch(`${API_BASE}/documents/migrate-fts`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                log.textContent += `Status: ${response.status}\n`;
+                log.textContent += `Response:\n${JSON.stringify(result, null, 2)}\n`;
+
+                if (result.success) {
+                    log.className = 'log success';
+                    log.textContent += `\n✓ Migration completed!\nIndexed ${result.indexedPages} pages\n`;
+                } else {
+                    log.className = 'log error';
+                    log.textContent += `\n✗ Migration failed: ${result.error}\n`;
+                }
+
+            } catch (error) {
+                log.className = 'log error';
+                log.textContent += `\n✗ Error: ${error.message}\n`;
+            }
+        });
+    </script>
+</body>
+</html>
