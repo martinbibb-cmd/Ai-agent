@@ -70,30 +70,35 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Check if this is a static asset request (HTML, CSS, JS, etc.)
-    if (env.ASSETS && !url.pathname.startsWith('/agent') &&
-        !url.pathname.startsWith('/documents/upload') &&
-        !url.pathname.startsWith('/data/') &&
-        !url.pathname.startsWith('/voices') &&
-        !url.pathname.startsWith('/tools') &&
-        !url.pathname.startsWith('/health')) {
-      try {
-        return await env.ASSETS.fetch(request);
-      } catch (e) {
-        // Fall through to API handling if asset not found
-      }
-    }
-
     // Enable CORS
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
+    }
+
+    // Try to serve static assets first (for non-API routes)
+    if (!url.pathname.startsWith('/agent') &&
+        !url.pathname.startsWith('/documents/upload') &&
+        !url.pathname.startsWith('/documents/') &&
+        !url.pathname.startsWith('/data/') &&
+        !url.pathname.startsWith('/voices') &&
+        !url.pathname.startsWith('/tools') &&
+        !url.pathname.startsWith('/health') &&
+        !url.pathname.startsWith('/api')) {
+
+      if (env.ASSETS) {
+        try {
+          return await env.ASSETS.fetch(request);
+        } catch (e) {
+          console.error('Assets fetch error:', e);
+        }
+      }
     }
 
     // Initialize Document Manager if R2 and D1 are available
