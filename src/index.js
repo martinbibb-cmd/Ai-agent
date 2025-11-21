@@ -202,6 +202,40 @@ export default {
       }
     }
 
+    // Process document endpoint (extract text from uploaded PDF)
+    if (url.pathname.match(/^\/documents\/[^\/]+\/process$/) && request.method === 'POST') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const documentId = url.pathname.split('/')[2];
+        const result = await documentManager.processDocument(documentId);
+
+        return new Response(JSON.stringify({
+          success: true,
+          document: result
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('Process error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to process document',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Delete document endpoint
     if (url.pathname.startsWith('/documents/') && request.method === 'DELETE') {
       if (!documentManager) {

@@ -32,21 +32,13 @@ export class DocumentManager {
         }
       });
 
-      // Parse PDF
-      let parsedData;
-      try {
-        parsedData = await parsePDF(fileBuffer);
-      } catch (error) {
-        console.error('PDF parsing with pdfjs failed, trying fallback:', error);
-        const fallbackText = extractTextFallback(fileBuffer);
-        parsedData = {
-          pages: [{ pageNumber: 1, text: fallbackText }],
-          pageCount: 1,
-          metadata: {}
-        };
-      }
+      // Sanitize filename to prevent SQL issues
+      const cleanFilename = metadata.filename
+        .replace(/[^\x20-\x7E]/g, '_') // Replace non-ASCII with underscore
+        .replace(/['"]/g, '') // Remove quotes
+        .trim();
 
-      // Store document metadata
+      // Store document metadata WITHOUT text extraction
       await this.db.prepare(`
         INSERT INTO documents (
           id, filename, original_filename, content_type, file_size,
@@ -54,8 +46,8 @@ export class DocumentManager {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         documentId,
-        metadata.filename,
-        metadata.filename,
+        cleanFilename,
+        cleanFilename,
         metadata.contentType || 'application/pdf',
         fileBuffer.byteLength,
         new Date().toISOString(),
@@ -63,32 +55,21 @@ export class DocumentManager {
         metadata.category || 'general',
         JSON.stringify(metadata.tags || []),
         r2Key,
-        parsedData.pageCount,
-        'processed'
+        1, // Default page count
+        'uploaded' // Status: uploaded but not processed
       ).run();
 
-      // Store page content
-      for (const page of parsedData.pages) {
-        await this.db.prepare(`
-          INSERT INTO document_pages (document_id, page_number, content)
-          VALUES (?, ?, ?)
-        `).bind(documentId, page.pageNumber, page.text).run();
-
-        // Store chunks for better search
-        const chunks = chunkText(page.text);
-        for (let i = 0; i < chunks.length; i++) {
-          await this.db.prepare(`
-            INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
-            VALUES (?, ?, ?, ?)
-          `).bind(documentId, page.pageNumber, chunks[i], i).run();
-        }
-      }
+      // Store a simple placeholder in document_pages
+      await this.db.prepare(`
+        INSERT INTO document_pages (document_id, page_number, content)
+        VALUES (?, ?, ?)
+      `).bind(documentId, 1, `Document: ${metadata.filename} (text extraction pending)`).run();
 
       return {
         id: documentId,
         filename: metadata.filename,
-        pageCount: parsedData.pageCount,
-        status: 'processed'
+        pageCount: 1,
+        status: 'uploaded'
       };
 
     } catch (error) {
@@ -104,6 +85,86 @@ export class DocumentManager {
       }
 
       throw new Error(`Failed to upload document: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process an uploaded document to extract text
+   * @param {string} documentId
+   * @returns {Promise<{id: string, filename: string, pageCount: number, status: string}>}
+   */
+  async processDocument(documentId) {
+    try {
+      // Get the document from database
+      const doc = await this.db.prepare(`
+        SELECT * FROM documents WHERE id = ?
+      `).bind(documentId).first();
+
+      if (!doc) {
+        throw new Error('Document not found');
+      }
+
+      // Get the file from R2
+      const fileBuffer = await this.getDocumentFile(documentId);
+
+      // Parse PDF with text extraction
+      let parsedData;
+      try {
+        parsedData = await parsePDF(fileBuffer);
+      } catch (error) {
+        console.error('PDF parsing failed:', error);
+        // Mark as error
+        await this.db.prepare(`
+          UPDATE documents SET status = 'error' WHERE id = ?
+        `).bind(documentId).run();
+        throw error;
+      }
+
+      // Delete existing placeholder page content
+      await this.db.prepare(`
+        DELETE FROM document_pages WHERE document_id = ?
+      `).bind(documentId).run();
+
+      await this.db.prepare(`
+        DELETE FROM document_chunks WHERE document_id = ?
+      `).bind(documentId).run();
+
+      // Store extracted page content
+      for (const page of parsedData.pages) {
+        if (!page.text || page.text.length === 0) continue;
+
+        await this.db.prepare(`
+          INSERT INTO document_pages (document_id, page_number, content)
+          VALUES (?, ?, ?)
+        `).bind(documentId, page.pageNumber, page.text).run();
+
+        // Store chunks for better search
+        const chunks = chunkText(page.text);
+        for (let i = 0; i < chunks.length; i++) {
+          if (chunks[i] && chunks[i].trim().length > 0) {
+            await this.db.prepare(`
+              INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
+              VALUES (?, ?, ?, ?)
+            `).bind(documentId, page.pageNumber, chunks[i].trim(), i).run();
+          }
+        }
+      }
+
+      // Update document status to processed
+      await this.db.prepare(`
+        UPDATE documents SET status = 'processed', page_count = ? WHERE id = ?
+      `).bind(parsedData.pageCount, documentId).run();
+
+      return {
+        id: documentId,
+        filename: doc.filename,
+        pageCount: parsedData.pageCount,
+        status: 'processed'
+      };
+
+    } catch (error) {
+      console.error('Document processing error:', error);
+      throw new Error(`Failed to process document: ${error.message}`);
     }
   }
 
@@ -168,29 +229,46 @@ export class DocumentManager {
    * @returns {Promise<Array>}
    */
   async listDocuments(filters = {}) {
-    let query = `
-      SELECT id, filename, original_filename, content_type, file_size,
-             uploaded_at, uploaded_by, category, tags, page_count, status
-      FROM documents
-      WHERE 1=1
-    `;
+    try {
+      let query = `
+        SELECT id, filename, original_filename, content_type, file_size,
+               uploaded_at, uploaded_by, category, tags, page_count, status
+        FROM documents
+        WHERE 1=1
+      `;
 
-    const params = [];
+      const params = [];
 
-    if (filters.category) {
-      query += ` AND category = ?`;
-      params.push(filters.category);
+      if (filters.category) {
+        query += ` AND category = ?`;
+        params.push(filters.category);
+      }
+
+      query += ` ORDER BY uploaded_at DESC LIMIT ? OFFSET ?`;
+      params.push(filters.limit || 50, filters.offset || 0);
+
+      const results = await this.db.prepare(query).bind(...params).all();
+
+      return (results.results || []).map(doc => {
+        try {
+          return {
+            ...doc,
+            tags: JSON.parse(doc.tags || '[]')
+          };
+        } catch (e) {
+          // If tags parsing fails, return empty array
+          console.error('Failed to parse tags for document:', doc.id, e);
+          return {
+            ...doc,
+            tags: []
+          };
+        }
+      });
+    } catch (error) {
+      console.error('Error listing documents:', error);
+      // Return empty array instead of throwing
+      return [];
     }
-
-    query += ` ORDER BY uploaded_at DESC LIMIT ? OFFSET ?`;
-    params.push(filters.limit || 50, filters.offset || 0);
-
-    const results = await this.db.prepare(query).bind(...params).all();
-
-    return (results.results || []).map(doc => ({
-      ...doc,
-      tags: JSON.parse(doc.tags || '[]')
-    }));
   }
 
   /**

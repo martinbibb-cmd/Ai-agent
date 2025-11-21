@@ -14,7 +14,6 @@
     "wrangler": "^3.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.20.0",
-    "pdfjs-dist": "^3.11.0"
+    "@anthropic-ai/sdk": "^0.20.0"
   }
 }
