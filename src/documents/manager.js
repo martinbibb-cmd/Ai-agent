@@ -7,6 +7,77 @@ export class DocumentManager {
   constructor(r2Bucket, database) {
     this.r2 = r2Bucket;
     this.db = database;
+    this.initialized = this.initialize();
+  }
+
+  async initialize() {
+    try {
+      const schema = `
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          filename TEXT NOT NULL,
+          original_filename TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          uploaded_at TEXT NOT NULL,
+          uploaded_by TEXT,
+          category TEXT,
+          tags TEXT,
+          r2_key TEXT NOT NULL,
+          page_count INTEGER,
+          status TEXT DEFAULT 'processed'
+        );
+
+        CREATE TABLE IF NOT EXISTS document_pages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id TEXT NOT NULL,
+          page_number INTEGER NOT NULL,
+          content TEXT NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS document_chunks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id TEXT NOT NULL,
+          page_number INTEGER,
+          chunk_text TEXT NOT NULL,
+          chunk_index INTEGER NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+          document_id,
+          filename,
+          content,
+          content='document_pages',
+          content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON document_pages BEGIN
+          INSERT INTO documents_fts(rowid, document_id, filename, content)
+          SELECT
+            new.id,
+            new.document_id,
+            (SELECT filename FROM documents WHERE id = new.document_id),
+            new.content;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON document_pages BEGIN
+          DELETE FROM documents_fts WHERE rowid = old.id;
+        END;
+
+        CREATE INDEX IF NOT EXISTS idx_documents_uploaded_at ON documents(uploaded_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
+        CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+        CREATE INDEX IF NOT EXISTS idx_document_pages_document_id ON document_pages(document_id);
+        CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id);
+      `;
+
+      await this.db.exec(schema);
+    } catch (error) {
+      console.error('Failed to initialize document schema:', error);
+      throw new Error('Document storage is not configured correctly.');
+    }
   }
 
   /**
@@ -16,6 +87,7 @@ export class DocumentManager {
    * @returns {Promise<{id: string, filename: string, pageCount: number}>}
    */
   async uploadDocument(file, metadata) {
+    await this.initialized;
     const documentId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const r2Key = `documents/${documentId}`;
 
@@ -94,6 +166,7 @@ export class DocumentManager {
    * @returns {Promise<{id: string, filename: string, pageCount: number, status: string}>}
    */
   async processDocument(documentId) {
+    await this.initialized;
     try {
       // Get the document from database
       const doc = await this.db.prepare(`
@@ -175,6 +248,7 @@ export class DocumentManager {
    * @returns {Promise<Array>}
    */
   async searchDocuments(query, limit = 10) {
+    await this.initialized;
     const results = await this.db.prepare(`
       SELECT
         d.id,
@@ -201,6 +275,7 @@ export class DocumentManager {
    * @returns {Promise<Object>}
    */
   async getDocument(documentId) {
+    await this.initialized;
     const doc = await this.db.prepare(`
       SELECT * FROM documents WHERE id = ?
     `).bind(documentId).first();
@@ -229,6 +304,7 @@ export class DocumentManager {
    * @returns {Promise<Array>}
    */
   async listDocuments(filters = {}) {
+    await this.initialized;
     try {
       let query = `
         SELECT id, filename, original_filename, content_type, file_size,
@@ -266,8 +342,7 @@ export class DocumentManager {
       });
     } catch (error) {
       console.error('Error listing documents:', error);
-      // Return empty array instead of throwing
-      return [];
+      throw new Error('Failed to fetch documents');
     }
   }
 
@@ -276,6 +351,7 @@ export class DocumentManager {
    * @param {string} documentId
    */
   async deleteDocument(documentId) {
+    await this.initialized;
     const doc = await this.getDocument(documentId);
 
     // Delete from R2
@@ -293,6 +369,7 @@ export class DocumentManager {
    * @returns {Promise<ArrayBuffer>}
    */
   async getDocumentFile(documentId) {
+    await this.initialized;
     const doc = await this.db.prepare(`
       SELECT r2_key FROM documents WHERE id = ?
     `).bind(documentId).first();
