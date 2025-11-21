@@ -1,0 +1,8 @@
+{
+  "title": "Quick Start Guide - Home Heating Survey",
+  "author": "AI Agent Team",
+  "created": "2024-01-20",
+  "category": "guides",
+  "tags": ["survey", "heating", "quickstart"],
+  "content": "This is a simple text document in JSON format.\n\nHow to Use:\n1. Upload documents via the document manager\n2. Process them to extract text and structure\n3. Search across all your documents\n4. Export as structured JSON\n\nBenefits of JSON Upload:\n- No PDF parsing needed\n- Pre-structured data\n- Fast processing\n- Easy to generate programmatically\n\nFor more information, see the documentation at /PARSER_README.md"
+}
