@@ -224,9 +224,9 @@
         <div class="upload-section">
             <h2 style="margin-bottom: 16px;">Upload New Document</h2>
             <div class="upload-area" id="uploadArea">
-                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF file here or click to browse</p>
-                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB</p>
-                <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop file here or click to browse</p>
+                <p style="color: #666; font-size: 14px;">Supports: PDF, TXT, MD, JSON, CSV, XML, HTML (up to 10MB)</p>
+                <input type="file" id="fileInput" accept=".pdf,.txt,.text,.md,.markdown,.json,.csv,.xml,.html,.htm,.log,.yaml,.yml" style="display: none;">
             </div>
 
             <div class="upload-form">
@@ -310,8 +310,32 @@
         }
 
         function handleFileSelect(file) {
-            if (file.type !== 'application/pdf') {
-                showStatus('Only PDF files are supported', 'error');
+            // Supported file types
+            const supportedTypes = [
+                'application/pdf',
+                'text/plain',
+                'text/markdown',
+                'application/json',
+                'text/csv',
+                'application/xml',
+                'text/xml',
+                'text/html',
+                'application/yaml',
+                'text/yaml'
+            ];
+
+            const supportedExtensions = [
+                '.pdf', '.txt', '.text', '.md', '.markdown', '.json',
+                '.csv', '.xml', '.html', '.htm', '.log', '.yaml', '.yml'
+            ];
+
+            const fileName = file.name.toLowerCase();
+            const fileType = file.type;
+            const hasValidType = supportedTypes.includes(fileType) || fileType === '';
+            const hasValidExtension = supportedExtensions.some(ext => fileName.endsWith(ext));
+
+            if (!hasValidType && !hasValidExtension) {
+                showStatus('Unsupported file format. Supported: PDF, TXT, MD, JSON, CSV, XML, HTML', 'error');
                 return;
             }
 
@@ -356,7 +380,7 @@
                 if (result.success) {
                     showStatus(`Document "${result.document.filename}" uploaded successfully!`, 'success');
                     selectedFile = null;
-                    document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop PDF file here or click to browse';
+                    document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop file here or click to browse';
                     document.getElementById('tagsInput').value = '';
                     document.getElementById('fileInput').value = '';
                     loadDocuments();
