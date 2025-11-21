@@ -222,11 +222,12 @@
         </div>
 
         <div class="upload-section">
-            <h2 style="margin-bottom: 16px;">Upload New Document</h2>
+            <h2 style="margin-bottom: 16px;">Upload Documents</h2>
             <div class="upload-area" id="uploadArea">
-                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF file here or click to browse</p>
-                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB</p>
-                <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF files here or click to browse</p>
+                <p style="color: #666; font-size: 14px;">Supports multiple PDF files up to 10MB each</p>
+                <input type="file" id="fileInput" accept="application/pdf" multiple style="display: none;">
+                <input type="file" id="folderInput" webkitdirectory directory style="display: none;">
             </div>
 
             <div class="upload-form">
@@ -238,8 +239,11 @@
                     <option value="regulations">Regulations</option>
                 </select>
                 <input type="text" id="tagsInput" placeholder="Tags (comma separated)">
-                <button id="uploadButton" disabled>Upload Document</button>
+                <button id="uploadButton" disabled>Upload Selected</button>
+                <button id="folderButton" style="background: #10b981;">Upload Folder</button>
             </div>
+
+            <div id="uploadQueue" style="margin-top: 16px;"></div>
         </div>
 
         <div class="status-message" id="statusMessage"></div>
@@ -267,7 +271,7 @@
 
     <script>
         const API_BASE_URL = window.location.origin;
-        let selectedFile = null;
+        let selectedFiles = [];
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -278,9 +282,12 @@
         function setupUpload() {
             const uploadArea = document.getElementById('uploadArea');
             const fileInput = document.getElementById('fileInput');
+            const folderInput = document.getElementById('folderInput');
             const uploadButton = document.getElementById('uploadButton');
+            const folderButton = document.getElementById('folderButton');
 
             uploadArea.addEventListener('click', () => fileInput.click());
+            folderButton.addEventListener('click', () => folderInput.click());
 
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
@@ -294,82 +301,135 @@
             uploadArea.addEventListener('drop', (e) => {
                 e.preventDefault();
                 uploadArea.classList.remove('dragover');
-                const files = e.dataTransfer.files;
-                if (files.length > 0) {
-                    handleFileSelect(files[0]);
-                }
+                handleFilesSelect(Array.from(e.dataTransfer.files));
             });
 
             fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) {
-                    handleFileSelect(e.target.files[0]);
-                }
+                handleFilesSelect(Array.from(e.target.files));
             });
 
-            uploadButton.addEventListener('click', uploadDocument);
+            folderInput.addEventListener('change', (e) => {
+                handleFilesSelect(Array.from(e.target.files));
+            });
+
+            uploadButton.addEventListener('click', uploadAllDocuments);
         }
 
-        function handleFileSelect(file) {
-            if (file.type !== 'application/pdf') {
-                showStatus('Only PDF files are supported', 'error');
+        function handleFilesSelect(files) {
+            // Filter for PDFs only
+            const pdfFiles = files.filter(f => f.type === 'application/pdf');
+
+            if (pdfFiles.length === 0) {
+                showStatus('No PDF files found', 'error');
                 return;
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                showStatus('File size must be less than 10MB', 'error');
+            // Filter out files that are too large
+            const validFiles = pdfFiles.filter(f => f.size <= 10 * 1024 * 1024);
+            const tooLarge = pdfFiles.length - validFiles.length;
+
+            if (tooLarge > 0) {
+                showStatus(`${tooLarge} file(s) skipped (>10MB)`, 'error');
+            }
+
+            selectedFiles = validFiles;
+            updateUploadQueue();
+            document.getElementById('uploadButton').disabled = validFiles.length === 0;
+        }
+
+        function updateUploadQueue() {
+            const queueEl = document.getElementById('uploadQueue');
+
+            if (selectedFiles.length === 0) {
+                queueEl.innerHTML = '';
+                document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop PDF files here or click to browse';
                 return;
             }
 
-            selectedFile = file;
-            document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${file.name}`;
-            document.getElementById('uploadButton').disabled = false;
+            document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${selectedFiles.length} file(s)`;
+
+            queueEl.innerHTML = `
+                <div style="padding: 12px; background: #f0f0f0; border-radius: 8px;">
+                    <strong>Upload Queue (${selectedFiles.length} files):</strong>
+                    <ul style="margin: 8px 0 0 20px; max-height: 150px; overflow-y: auto;">
+                        ${selectedFiles.map(f => `<li>${f.name} (${formatBytes(f.size)})</li>`).join('')}
+                    </ul>
+                </div>
+            `;
         }
 
-        async function uploadDocument() {
-            if (!selectedFile) return;
+        async function uploadAllDocuments() {
+            if (selectedFiles.length === 0) return;
 
             const uploadButton = document.getElementById('uploadButton');
+            const folderButton = document.getElementById('folderButton');
             uploadButton.disabled = true;
+            folderButton.disabled = true;
             uploadButton.textContent = 'Uploading...';
 
-            try {
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                formData.append('category', document.getElementById('categorySelect').value);
+            const category = document.getElementById('categorySelect').value;
+            const tags = document.getElementById('tagsInput').value
+                .split(',')
+                .map(t => t.trim())
+                .filter(t => t);
 
-                const tags = document.getElementById('tagsInput').value
-                    .split(',')
-                    .map(t => t.trim())
-                    .filter(t => t);
+            let successCount = 0;
+            let errorCount = 0;
 
-                if (tags.length > 0) {
-                    formData.append('tags', JSON.stringify(tags));
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const file = selectedFiles[i];
+                uploadButton.textContent = `Uploading ${i + 1}/${selectedFiles.length}...`;
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('category', category);
+
+                    if (tags.length > 0) {
+                        formData.append('tags', JSON.stringify(tags));
+                    }
+
+                    const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        errorCount++;
+                        console.error(`Failed to upload ${file.name}:`, result.error);
+                    }
+
+                } catch (error) {
+                    errorCount++;
+                    console.error(`Upload error for ${file.name}:`, error);
                 }
-
-                const response = await fetch(`${API_BASE_URL}/documents/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showStatus(`Document "${result.document.filename}" uploaded successfully!`, 'success');
-                    selectedFile = null;
-                    document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop PDF file here or click to browse';
-                    document.getElementById('tagsInput').value = '';
-                    document.getElementById('fileInput').value = '';
-                    loadDocuments();
-                } else {
-                    showStatus(`Upload failed: ${result.error}`, 'error');
-                }
-
-            } catch (error) {
-                showStatus(`Upload error: ${error.message}`, 'error');
-            } finally {
-                uploadButton.disabled = false;
-                uploadButton.textContent = 'Upload Document';
             }
+
+            // Show summary
+            if (successCount > 0 && errorCount === 0) {
+                showStatus(`✓ Successfully uploaded ${successCount} document(s)!`, 'success');
+            } else if (successCount > 0 && errorCount > 0) {
+                showStatus(`Uploaded ${successCount}, failed ${errorCount} document(s)`, 'error');
+            } else {
+                showStatus(`Failed to upload all ${errorCount} document(s)`, 'error');
+            }
+
+            // Reset
+            selectedFiles = [];
+            updateUploadQueue();
+            document.getElementById('tagsInput').value = '';
+            document.getElementById('fileInput').value = '';
+            document.getElementById('folderInput').value = '';
+
+            uploadButton.disabled = true;
+            folderButton.disabled = false;
+            uploadButton.textContent = 'Upload Selected';
+
+            loadDocuments();
         }
 
         async function loadDocuments() {
