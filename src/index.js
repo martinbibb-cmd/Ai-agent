@@ -3,6 +3,7 @@ import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
+import { handleFTSMigration } from './documents/migrate-fts.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -303,6 +304,20 @@ export default {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+    }
+
+    // FTS Migration endpoint (for fixing schema mismatches)
+    if (url.pathname === '/documents/migrate-fts' && request.method === 'POST') {
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return await handleFTSMigration(request, env.DB);
     }
 
     // Agent endpoint with tool calling
