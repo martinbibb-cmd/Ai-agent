@@ -32,6 +32,12 @@ export class DocumentManager {
         }
       });
 
+      // Sanitize filename to prevent SQL issues
+      const cleanFilename = metadata.filename
+        .replace(/[^\x20-\x7E]/g, '_') // Replace non-ASCII with underscore
+        .replace(/['"]/g, '') // Remove quotes
+        .trim();
+
       // Store document metadata WITHOUT text extraction
       await this.db.prepare(`
         INSERT INTO documents (
@@ -40,8 +46,8 @@ export class DocumentManager {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         documentId,
-        metadata.filename,
-        metadata.filename,
+        cleanFilename,
+        cleanFilename,
         metadata.contentType || 'application/pdf',
         fileBuffer.byteLength,
         new Date().toISOString(),
@@ -223,29 +229,46 @@ export class DocumentManager {
    * @returns {Promise<Array>}
    */
   async listDocuments(filters = {}) {
-    let query = `
-      SELECT id, filename, original_filename, content_type, file_size,
-             uploaded_at, uploaded_by, category, tags, page_count, status
-      FROM documents
-      WHERE 1=1
-    `;
+    try {
+      let query = `
+        SELECT id, filename, original_filename, content_type, file_size,
+               uploaded_at, uploaded_by, category, tags, page_count, status
+        FROM documents
+        WHERE 1=1
+      `;
 
-    const params = [];
+      const params = [];
 
-    if (filters.category) {
-      query += ` AND category = ?`;
-      params.push(filters.category);
+      if (filters.category) {
+        query += ` AND category = ?`;
+        params.push(filters.category);
+      }
+
+      query += ` ORDER BY uploaded_at DESC LIMIT ? OFFSET ?`;
+      params.push(filters.limit || 50, filters.offset || 0);
+
+      const results = await this.db.prepare(query).bind(...params).all();
+
+      return (results.results || []).map(doc => {
+        try {
+          return {
+            ...doc,
+            tags: JSON.parse(doc.tags || '[]')
+          };
+        } catch (e) {
+          // If tags parsing fails, return empty array
+          console.error('Failed to parse tags for document:', doc.id, e);
+          return {
+            ...doc,
+            tags: []
+          };
+        }
+      });
+    } catch (error) {
+      console.error('Error listing documents:', error);
+      // Return empty array instead of throwing
+      return [];
     }
-
-    query += ` ORDER BY uploaded_at DESC LIMIT ? OFFSET ?`;
-    params.push(filters.limit || 50, filters.offset || 0);
-
-    const results = await this.db.prepare(query).bind(...params).all();
-
-    return (results.results || []).map(doc => ({
-      ...doc,
-      tags: JSON.parse(doc.tags || '[]')
-    }));
   }
 
   /**
