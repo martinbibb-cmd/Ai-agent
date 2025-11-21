@@ -8,7 +8,12 @@ A Cloudflare Workers-based AI agent with multi-persona support for surveys and b
 - **Dynamic Persona Switching**: Switch between personalities on-the-fly
 - **Conversation History**: Maintains context throughout the conversation
 - **TTS Voice Mapping**: Each persona maps to a specific text-to-speech voice
-- **Specialized Knowledge**: Survey methodology and boiler/HVAC expertise
+- **Advanced Tool Calling**: Claude uses specialized tools for complex tasks
+- **Survey Management**: Create, conduct, and manage surveys with various question types
+- **Boiler Expertise**: Comprehensive knowledge base with 13+ boiler models
+- **Heating Calculations**: BTU requirements, sizing, and efficiency analysis
+- **Issue Diagnosis**: Troubleshoot boiler problems with safety-first approach
+- **Cost Estimation**: Installation and repair cost estimates
 - **Modern UI**: Clean, responsive interface with real-time chat
 
 ## Architecture
@@ -35,15 +40,30 @@ All personas are stored in `data/personas.json` with the following structure:
 4. **Marvin** - Dry & Sardonic (voice: botanica)
 5. **Sonny** - Curious & Thoughtful (voice: lumina)
 
+### Agent Tools
+
+The agent has access to 7 specialized tools for handling complex tasks:
+
+1. **create_survey** - Create structured surveys with multiple question types
+2. **recommend_boiler** - Recommend boilers based on home specs and requirements
+3. **calculate_heating_needs** - Calculate BTU requirements for homes
+4. **diagnose_boiler_issue** - Diagnose problems based on symptoms
+5. **compare_boilers** - Compare multiple boiler models side-by-side
+6. **estimate_installation_cost** - Estimate total installation costs
+7. **save_survey_response** - Save and track survey responses
+
+The agent automatically decides when to use tools based on the conversation context.
+
 ### Backend (Cloudflare Worker)
 
 The Worker (`src/index.js`) provides the following endpoints:
 
-- `GET /` - API information
+- `GET /` - API information and capabilities
 - `GET /data/personas.json` - Fetch available personas
-- `POST /agent` - Send messages to the agent
+- `POST /agent` - Send messages to agent (with automatic tool calling)
 - `GET /voices` - Get TTS voice mappings
-- `GET /health` - Health check
+- `GET /tools` - Get available tools info
+- `GET /health` - Health check with tool count
 
 #### Agent Request Format
 
@@ -180,19 +200,47 @@ Ai-agent/
 ├── public/
 │   └── index.html            # Frontend UI
 ├── src/
-│   └── index.js              # Cloudflare Worker backend
+│   ├── index.js              # Cloudflare Worker backend with tool calling
+│   ├── tools/
+│   │   ├── definitions.js    # Tool schemas for Claude
+│   │   └── handlers.js       # Tool execution logic
+│   └── knowledge/
+│       └── boilers.js        # Boiler database and knowledge base
 ├── .gitignore
 ├── package.json
 ├── wrangler.toml             # Cloudflare configuration
 └── README.md
 ```
 
+## Example Use Cases
+
+### Boiler Recommendation
+"I have a 2000 sq ft home with 3 bedrooms and 2 bathrooms. I prefer gas and want something energy efficient. What boiler should I get?"
+
+→ Agent uses `calculate_heating_needs` and `recommend_boiler` tools to provide data-driven recommendations.
+
+### Survey Creation
+"I need to create a survey about customer satisfaction with boiler installations"
+
+→ Agent uses `create_survey` tool to generate a structured survey with appropriate question types.
+
+### Troubleshooting
+"My boiler is making strange noises and the pressure is low. It's 8 years old."
+
+→ Agent uses `diagnose_boiler_issue` tool to identify possible causes and suggest solutions.
+
+### Cost Planning
+"How much would it cost to install a new combi gas boiler to replace my old system?"
+
+→ Agent uses `estimate_installation_cost` tool with installation complexity assessment.
+
 ## Technologies
 
 - **Runtime**: Cloudflare Workers (V8 isolates)
-- **AI Model**: Anthropic Claude (Sonnet 4.5)
+- **AI Model**: Anthropic Claude (Sonnet 4.5) with tool calling
 - **Frontend**: Vanilla JavaScript, HTML5, CSS3
 - **Build Tool**: Wrangler 3.0
+- **Architecture**: Serverless with edge compute
 
 ## Security
 
