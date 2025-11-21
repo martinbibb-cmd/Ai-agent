@@ -70,6 +70,20 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Check if this is a static asset request (HTML, CSS, JS, etc.)
+    if (env.ASSETS && !url.pathname.startsWith('/agent') &&
+        !url.pathname.startsWith('/documents/upload') &&
+        !url.pathname.startsWith('/data/') &&
+        !url.pathname.startsWith('/voices') &&
+        !url.pathname.startsWith('/tools') &&
+        !url.pathname.startsWith('/health')) {
+      try {
+        return await env.ASSETS.fetch(request);
+      } catch (e) {
+        // Fall through to API handling if asset not found
+      }
+    }
+
     // Enable CORS
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
@@ -398,8 +412,8 @@ export default {
       });
     }
 
-    // Default response for root
-    if (url.pathname === '/') {
+    // API Info endpoint
+    if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
         version: '2.0',
@@ -410,11 +424,17 @@ export default {
           'Heating calculations',
           'Issue diagnosis',
           'Cost estimation',
-          'Model comparison'
+          'Model comparison',
+          'Document search'
         ],
         endpoints: {
+          '/': 'GET - Chat Interface',
+          '/documents.html': 'GET - Document Manager',
           '/data/personas.json': 'GET - Get available personas',
           '/agent': 'POST - Send message to agent (with tool calling)',
+          '/documents/upload': 'POST - Upload PDF document',
+          '/documents': 'GET - List documents',
+          '/documents/{id}': 'DELETE - Delete document',
           '/voices': 'GET - Get voice mapping',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
@@ -427,6 +447,7 @@ export default {
       });
     }
 
+    // 404 for unknown routes
     return new Response('Not Found', {
       status: 404,
       headers: corsHeaders,
