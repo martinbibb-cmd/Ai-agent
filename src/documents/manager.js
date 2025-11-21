@@ -67,34 +67,23 @@ export class DocumentManager {
         'processed'
       ).run();
 
-      // Store page content
+      // Store page content (already sanitized by parser)
       for (const page of parsedData.pages) {
-        // Clean and sanitize text to prevent SQL issues
-        const cleanText = page.text
-          .replace(/\0/g, '') // Remove null bytes
-          .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ') // Remove control characters
-          .trim();
-
-        if (cleanText.length === 0) continue; // Skip empty pages
+        if (!page.text || page.text.length === 0) continue;
 
         await this.db.prepare(`
           INSERT INTO document_pages (document_id, page_number, content)
           VALUES (?, ?, ?)
-        `).bind(documentId, page.pageNumber, cleanText).run();
+        `).bind(documentId, page.pageNumber, page.text).run();
 
         // Store chunks for better search
-        const chunks = chunkText(cleanText);
+        const chunks = chunkText(page.text);
         for (let i = 0; i < chunks.length; i++) {
-          const cleanChunk = chunks[i]
-            .replace(/\0/g, '')
-            .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ')
-            .trim();
-
-          if (cleanChunk.length > 0) {
+          if (chunks[i] && chunks[i].trim().length > 0) {
             await this.db.prepare(`
               INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
               VALUES (?, ?, ?, ?)
-            `).bind(documentId, page.pageNumber, cleanChunk, i).run();
+            `).bind(documentId, page.pageNumber, chunks[i].trim(), i).run();
           }
         }
       }

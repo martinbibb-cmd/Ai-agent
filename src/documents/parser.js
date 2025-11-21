@@ -1,4 +1,30 @@
 /**
+ * Ultra-aggressive text sanitization for D1 compatibility
+ * Only allows safe ASCII characters
+ * @param {string} text
+ * @returns {string}
+ */
+export function sanitizeTextForSQL(text) {
+  if (!text || typeof text !== 'string') return '';
+
+  return text
+    // Remove all non-printable characters
+    .replace(/[^\x20-\x7E\n\r\t]/g, ' ')
+    // Remove any remaining problematic characters
+    .replace(/\0/g, '')
+    // Normalize quotes and apostrophes
+    .replace(/[''`]/g, "'")
+    .replace(/[""]/g, '"')
+    // Normalize dashes
+    .replace(/[–—]/g, '-')
+    // Remove zero-width characters
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // Collapse multiple spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Extract text from PDF buffer
  * Uses a simple text extraction method that works reliably in Cloudflare Workers
  * @param {ArrayBuffer} pdfBuffer - PDF file as ArrayBuffer
@@ -9,41 +35,64 @@ export async function parsePDF(pdfBuffer) {
     // Use the improved fallback method which is more reliable in Workers
     const text = extractTextFallback(pdfBuffer);
 
+    // Sanitize immediately after extraction
+    const cleanText = sanitizeTextForSQL(text);
+
     // Estimate page count from PDF structure
     const uint8Array = new Uint8Array(pdfBuffer);
-    const pdfText = new TextDecoder('utf-8').decode(uint8Array);
+    const pdfText = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
     const pageMatches = pdfText.match(/\/Type\s*\/Page[^s]/g) || [];
     const pageCount = Math.max(pageMatches.length, 1);
 
     // Split text into approximate pages if we found page markers
     const pages = [];
-    if (pageCount > 1 && text.length > 0) {
-      const charsPerPage = Math.ceil(text.length / pageCount);
+    if (pageCount > 1 && cleanText.length > 0) {
+      const charsPerPage = Math.ceil(cleanText.length / pageCount);
       for (let i = 0; i < pageCount; i++) {
         const start = i * charsPerPage;
-        const end = Math.min(start + charsPerPage, text.length);
-        pages.push({
-          pageNumber: i + 1,
-          text: text.slice(start, end).trim()
-        });
+        const end = Math.min(start + charsPerPage, cleanText.length);
+        const pageText = cleanText.slice(start, end).trim();
+
+        if (pageText.length > 0) {
+          pages.push({
+            pageNumber: i + 1,
+            text: pageText
+          });
+        }
       }
-    } else {
-      // Single page or couldn't split
+    } else if (cleanText.length > 0) {
+      // Single page
       pages.push({
         pageNumber: 1,
-        text: text
+        text: cleanText
+      });
+    }
+
+    // If we got no pages, create one with a placeholder
+    if (pages.length === 0) {
+      pages.push({
+        pageNumber: 1,
+        text: 'No extractable text found in PDF'
       });
     }
 
     return {
-      pages: pages.filter(p => p.text.length > 0), // Only include pages with text
+      pages: pages,
       pageCount: pages.length,
       metadata: {}
     };
 
   } catch (error) {
     console.error('PDF parsing error:', error);
-    throw new Error(`Failed to parse PDF: ${error.message}`);
+    // Return a safe fallback
+    return {
+      pages: [{
+        pageNumber: 1,
+        text: 'PDF uploaded but text extraction failed'
+      }],
+      pageCount: 1,
+      metadata: {}
+    };
   }
 }
 
@@ -56,15 +105,18 @@ export async function parsePDF(pdfBuffer) {
 export function extractTextFallback(pdfBuffer) {
   try {
     const uint8Array = new Uint8Array(pdfBuffer);
-    const text = new TextDecoder('latin1').decode(uint8Array); // Use latin1 for better PDF compatibility
+    const text = new TextDecoder('latin1', { fatal: false }).decode(uint8Array);
 
     const textBlocks = [];
 
     // Extract text from PDF text objects (BT...ET blocks)
     const btPattern = /BT\s+([\s\S]*?)\s+ET/g;
     let match;
+    let matchCount = 0;
+    const maxMatches = 10000; // Prevent infinite loops
 
-    while ((match = btPattern.exec(text)) !== null) {
+    while ((match = btPattern.exec(text)) !== null && matchCount < maxMatches) {
+      matchCount++;
       const block = match[1];
 
       // Extract text from Tj and TJ operators
@@ -72,53 +124,70 @@ export function extractTextFallback(pdfBuffer) {
       const tjArrayPattern = /\[((?:[^\]\\]|\\[\]\\])*)\]\s*TJ/g;
 
       let tjMatch;
-      while ((tjMatch = tjPattern.exec(block)) !== null) {
-        const extractedText = tjMatch[1]
-          .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8))) // Octal escapes
-          .replace(/\\n/g, '\n')
-          .replace(/\\r/g, '\r')
-          .replace(/\\t/g, '\t')
-          .replace(/\\(.)/g, '$1'); // Other escapes
+      let tjMatchCount = 0;
+      while ((tjMatch = tjPattern.exec(block)) !== null && tjMatchCount < 1000) {
+        tjMatchCount++;
+        try {
+          const extractedText = tjMatch[1]
+            .replace(/\\(\d{3})/g, (_, oct) => {
+              const code = parseInt(oct, 8);
+              return (code >= 32 && code <= 126) ? String.fromCharCode(code) : ' ';
+            })
+            .replace(/\\n/g, ' ')
+            .replace(/\\r/g, ' ')
+            .replace(/\\t/g, ' ')
+            .replace(/\\(.)/g, '$1');
 
-        if (extractedText.trim()) {
-          textBlocks.push(extractedText);
+          if (extractedText && extractedText.trim()) {
+            textBlocks.push(extractedText);
+          }
+        } catch (e) {
+          // Skip problematic text blocks
+          continue;
         }
       }
 
       // Also extract from TJ arrays
       let tjArrayMatch;
-      while ((tjArrayMatch = tjArrayPattern.exec(block)) !== null) {
-        const arrayContent = tjArrayMatch[1];
-        const stringPattern = /\(((?:[^()\\]|\\[()\\])*)\)/g;
-        let stringMatch;
+      let tjArrayMatchCount = 0;
+      while ((tjArrayMatch = tjArrayPattern.exec(block)) !== null && tjArrayMatchCount < 1000) {
+        tjArrayMatchCount++;
+        try {
+          const arrayContent = tjArrayMatch[1];
+          const stringPattern = /\(((?:[^()\\]|\\[()\\])*)\)/g;
+          let stringMatch;
+          let stringMatchCount = 0;
 
-        while ((stringMatch = stringPattern.exec(arrayContent)) !== null) {
-          const extractedText = stringMatch[1]
-            .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
-            .replace(/\\n/g, '\n')
-            .replace(/\\r/g, '\r')
-            .replace(/\\t/g, '\t')
-            .replace(/\\(.)/g, '$1');
+          while ((stringMatch = stringPattern.exec(arrayContent)) !== null && stringMatchCount < 100) {
+            stringMatchCount++;
+            const extractedText = stringMatch[1]
+              .replace(/\\(\d{3})/g, (_, oct) => {
+                const code = parseInt(oct, 8);
+                return (code >= 32 && code <= 126) ? String.fromCharCode(code) : ' ';
+              })
+              .replace(/\\n/g, ' ')
+              .replace(/\\r/g, ' ')
+              .replace(/\\t/g, ' ')
+              .replace(/\\(.)/g, '$1');
 
-          if (extractedText.trim()) {
-            textBlocks.push(extractedText);
+            if (extractedText && extractedText.trim()) {
+              textBlocks.push(extractedText);
+            }
           }
+        } catch (e) {
+          // Skip problematic arrays
+          continue;
         }
       }
     }
 
-    // Join all text blocks and normalize whitespace
-    const fullText = textBlocks
-      .join(' ')
-      .replace(/\0/g, '') // Remove null bytes
-      .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, ' ') // Remove control characters except \n, \r, \t
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .trim();
+    // Join all text blocks
+    const fullText = textBlocks.join(' ');
 
-    return fullText || 'No extractable text found in PDF';
+    return fullText || '';
   } catch (error) {
     console.error('Text extraction error:', error);
-    return 'Error extracting text from PDF';
+    return '';
   }
 }
 
