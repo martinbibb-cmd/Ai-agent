@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import personas from '../data/personas.json';
+import { tools } from './tools/definitions.js';
+import { toolHandlers } from './tools/handlers.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -11,21 +13,51 @@ const VOICE_MAPPING = {
 };
 
 // Core system prompt shared across all personas
-const CORE_SYSTEM_PROMPT = `You are an AI assistant specialized in helping with surveys and boiler-related inquiries. Your knowledge includes:
+const CORE_SYSTEM_PROMPT = `You are an advanced AI assistant specialized in helping with surveys and boiler/heating system inquiries for UK homes.
 
-- Home heating systems, boilers, and HVAC equipment
-- Energy efficiency and heating optimization
-- Boiler maintenance, troubleshooting, and replacement
-- Survey methodology and best practices
-- Data collection and analysis
+YOUR CAPABILITIES:
 
-You use the following tools and capabilities to assist users:
-- Answer questions about boiler systems, specifications, and recommendations
-- Help conduct surveys and gather information systematically
-- Provide detailed, accurate technical information
-- Guide users through decision-making processes
+**Survey Management:**
+- Create structured surveys with various question types (multiple choice, ratings, text, yes/no)
+- Guide users through survey completion
+- Save and track survey responses
+- Help analyze survey data
 
-Always be helpful, accurate, and thorough in your responses.`;
+**Boiler & Heating Expertise (UK-focused):**
+- Recommend appropriate boilers based on home size, fuel type, and requirements
+- Calculate heating needs (kW requirements) for UK homes
+- Diagnose common boiler issues and suggest solutions
+- Compare different boiler models and manufacturers
+- Estimate installation costs in GBP
+- Explain different boiler types (combi, system, conventional)
+- Advise on energy efficiency and fuel types
+
+**Key Knowledge Areas:**
+- Boiler types: Combi, System, Conventional/Regular
+- Fuel types: Gas, Oil, LPG, Electric
+- Brands: Worcester Bosch, Vaillant, Ideal, Baxi, Grant, Firebird, etc.
+- Energy efficiency ratings and modern condensing technology
+- Installation requirements and costs (UK)
+- Maintenance and troubleshooting
+- UK Building Regulations compliance
+
+**Units (UK Metric Standard):**
+- Home size: square metres (m²)
+- Boiler output: kilowatts (kW)
+- Dimensions: millimetres (mm)
+- Temperature: Celsius (°C)
+- Currency: GBP (£)
+
+IMPORTANT INSTRUCTIONS:
+1. Use the available tools to provide accurate, data-driven recommendations
+2. Always ask clarifying questions when you need more information
+3. Explain technical concepts in ways appropriate to your persona
+4. When recommending boilers, consider home size (in m²), budget, and efficiency needs
+5. For troubleshooting, assess safety first - always recommend Gas Safe registered engineer for gas/safety issues
+6. Be thorough but conversational
+7. Use UK metric units in all calculations and recommendations
+
+You have access to specialized tools - use them when appropriate to provide the best assistance.`;
 
 export default {
   async fetch(request, env, ctx) {
@@ -53,7 +85,7 @@ export default {
       });
     }
 
-    // Agent endpoint
+    // Agent endpoint with tool calling
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
         const body = await request.json();
@@ -78,7 +110,7 @@ export default {
         const fullSystemPrompt = `${CORE_SYSTEM_PROMPT}\n\n---\n\nPERSONALITY AND COMMUNICATION STYLE:\n${personaSystem}`;
 
         // Build messages array from conversation history
-        const messages = [
+        let messages = [
           ...conversationHistory,
           {
             role: 'user',
@@ -86,22 +118,89 @@ export default {
           },
         ];
 
-        // Call Anthropic API
-        const response = await anthropic.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 4096,
-          system: fullSystemPrompt,
-          messages: messages,
-        });
+        // Tool calling loop - continue until we get a text response
+        let response;
+        let toolResults = [];
+        const maxIterations = 10; // Prevent infinite loops
+        let iteration = 0;
 
-        // Extract the response text
-        const responseText = response.content[0].text;
+        while (iteration < maxIterations) {
+          iteration++;
+
+          // Call Anthropic API with tools
+          response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 4096,
+            system: fullSystemPrompt,
+            messages: messages,
+            tools: tools,
+          });
+
+          // Check if Claude wants to use tools
+          if (response.stop_reason === 'tool_use') {
+            // Find all tool use blocks
+            const toolUses = response.content.filter(block => block.type === 'tool_use');
+
+            // Execute each tool
+            const toolResultsForThisTurn = await Promise.all(
+              toolUses.map(async (toolUse) => {
+                try {
+                  const handler = toolHandlers[toolUse.name];
+                  if (!handler) {
+                    return {
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
+                    };
+                  }
+
+                  const result = await handler(toolUse.input);
+                  return {
+                    type: 'tool_result',
+                    tool_use_id: toolUse.id,
+                    content: JSON.stringify(result)
+                  };
+                } catch (error) {
+                  return {
+                    type: 'tool_result',
+                    tool_use_id: toolUse.id,
+                    content: JSON.stringify({ error: error.message })
+                  };
+                }
+              })
+            );
+
+            // Add assistant's response with tool uses to messages
+            messages.push({
+              role: 'assistant',
+              content: response.content
+            });
+
+            // Add tool results to messages
+            messages.push({
+              role: 'user',
+              content: toolResultsForThisTurn
+            });
+
+            toolResults.push(...toolResultsForThisTurn);
+
+            // Continue loop to get Claude's response after tool use
+          } else {
+            // We got a text response, break the loop
+            break;
+          }
+        }
+
+        // Extract the final response text
+        const textBlocks = response.content.filter(block => block.type === 'text');
+        const responseText = textBlocks.map(block => block.text).join('\n\n');
 
         return new Response(JSON.stringify({
           response: responseText,
           personaId: personaId,
           voiceHint: voiceHint,
           ttsVoice: VOICE_MAPPING[personaId] || 'shimmer',
+          toolsUsed: toolResults.length > 0,
           usage: {
             inputTokens: response.usage.input_tokens,
             outputTokens: response.usage.output_tokens,
@@ -117,7 +216,8 @@ export default {
         console.error('Agent error:', error);
         return new Response(JSON.stringify({
           error: 'Failed to process agent request',
-          details: error.message
+          details: error.message,
+          stack: error.stack
         }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -135,12 +235,28 @@ export default {
       });
     }
 
+    // Tools info endpoint
+    if (url.pathname === '/tools') {
+      return new Response(JSON.stringify({
+        available_tools: tools.map(t => ({
+          name: t.name,
+          description: t.description
+        }))
+      }), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
     // Health check endpoint
     if (url.pathname === '/health') {
       return new Response(JSON.stringify({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         personas: personas.length,
+        tools: tools.length,
       }), {
         headers: {
           ...corsHeaders,
@@ -152,12 +268,23 @@ export default {
     // Default response for root
     if (url.pathname === '/') {
       return new Response(JSON.stringify({
-        message: 'AI Agent API',
+        message: 'AI Agent API with Tool Calling',
+        version: '2.0',
+        capabilities: [
+          'Multi-persona support',
+          'Survey creation and management',
+          'Boiler recommendations',
+          'Heating calculations',
+          'Issue diagnosis',
+          'Cost estimation',
+          'Model comparison'
+        ],
         endpoints: {
-          '/data/personas.json': 'Get available personas',
-          '/agent': 'POST - Send message to agent',
-          '/voices': 'Get voice mapping',
-          '/health': 'Health check',
+          '/data/personas.json': 'GET - Get available personas',
+          '/agent': 'POST - Send message to agent (with tool calling)',
+          '/voices': 'GET - Get voice mapping',
+          '/tools': 'GET - Get available tools',
+          '/health': 'GET - Health check',
         },
       }), {
         headers: {
