@@ -182,7 +182,7 @@ const response = await fetch('https://ai-agent.martinbibb.workers.dev/agent', {
     personaId: 'janet',
     personaSystem: 'You are Janet, a warm, friendly...',
     voiceHint: 'shimmer',
-    message: 'What type of boiler should I get for a 2000 sq ft home?',
+    message: 'What type of boiler should I get for a 180m² home?',
     conversationHistory: []
   })
 });
@@ -215,7 +215,7 @@ Ai-agent/
 ## Example Use Cases
 
 ### Boiler Recommendation
-"I have a 2000 sq ft home with 3 bedrooms and 2 bathrooms. I prefer gas and want something energy efficient. What boiler should I get?"
+"I have a 180m² home with 3 bedrooms and 2 bathrooms. I prefer gas and want something energy efficient. What boiler should I get?"
 
 → Agent uses `calculate_heating_needs` and `recommend_boiler` tools to provide data-driven recommendations.
 
@@ -233,6 +233,13 @@ Ai-agent/
 "How much would it cost to install a new combi gas boiler to replace my old system?"
 
 → Agent uses `estimate_installation_cost` tool with installation complexity assessment.
+
+## Units
+This agent uses **UK metric units**:
+- Home size: square metres (m²)
+- Boiler output: kilowatts (kW)
+- Dimensions: millimetres (mm)
+- Temperature: Celsius (°C)
 
 ## Technologies
 

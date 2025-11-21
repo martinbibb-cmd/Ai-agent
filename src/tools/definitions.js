@@ -37,13 +37,13 @@ export const tools = [
   },
   {
     name: "recommend_boiler",
-    description: "Recommend a boiler based on home specifications and requirements. Use this when users need help choosing a boiler system.",
+    description: "Recommend a boiler based on home specifications and requirements. Use this when users need help choosing a boiler system. (UK - metric units)",
     input_schema: {
       type: "object",
       properties: {
-        home_size_sqft: {
+        home_size_sqm: {
           type: "number",
-          description: "Size of the home in square feet"
+          description: "Size of the home in square metres (m²)"
         },
         num_bedrooms: {
           type: "number",
@@ -68,22 +68,22 @@ export const tools = [
           description: "Whether energy efficiency is a high priority"
         }
       },
-      required: ["home_size_sqft", "fuel_type"]
+      required: ["home_size_sqm", "fuel_type"]
     }
   },
   {
     name: "calculate_heating_needs",
-    description: "Calculate heating requirements (BTU) for a home based on specifications. Use this to determine what size heating system is needed.",
+    description: "Calculate heating requirements (kW) for a home based on specifications. Use this to determine what size heating system is needed. (UK - metric units)",
     input_schema: {
       type: "object",
       properties: {
-        home_size_sqft: {
+        home_size_sqm: {
           type: "number",
-          description: "Total living space in square feet"
+          description: "Total living space in square metres (m²)"
         },
         ceiling_height: {
           type: "number",
-          description: "Average ceiling height in feet (default 8)"
+          description: "Average ceiling height in metres (default 2.4m)"
         },
         insulation_quality: {
           type: "string",
@@ -100,7 +100,7 @@ export const tools = [
           description: "Approximate number of windows"
         }
       },
-      required: ["home_size_sqft"]
+      required: ["home_size_sqm"]
     }
   },
   {

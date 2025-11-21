@@ -30,7 +30,7 @@ export const toolHandlers = {
 
   recommend_boiler: async (input) => {
     const {
-      home_size_sqft,
+      home_size_sqm,
       num_bedrooms = 3,
       num_bathrooms = 2,
       fuel_type,
@@ -38,12 +38,12 @@ export const toolHandlers = {
       efficiency_priority = true
     } = input;
 
-    // Calculate required BTU
-    const btuRequired = calculateBTU(home_size_sqft);
+    // Calculate required kW
+    const kwRequired = calculateKW(home_size_sqm);
 
     // Filter boilers by fuel type and requirements
     const suitableBoilers = boilerDatabase.filter(boiler => {
-      const meetsSize = boiler.output_btu >= btuRequired * 0.9 && boiler.output_btu <= btuRequired * 1.3;
+      const meetsSize = boiler.output_kw >= kwRequired * 0.9 && boiler.output_kw <= kwRequired * 1.3;
       const meetsFuel = boiler.fuel_type === fuel_type;
       const meetsBudget = matchesBudget(boiler.price_range, budget_range);
 
@@ -61,8 +61,8 @@ export const toolHandlers = {
     }));
 
     return {
-      required_btu: btuRequired,
-      recommended_output: `${Math.round(btuRequired / 1000)}k BTU`,
+      required_kw: kwRequired,
+      recommended_output: `${kwRequired}kW`,
       recommendations,
       reasoning: generateRecommendationReasoning(recommendations, input)
     };
@@ -70,15 +70,15 @@ export const toolHandlers = {
 
   calculate_heating_needs: async (input) => {
     const {
-      home_size_sqft,
-      ceiling_height = 8,
+      home_size_sqm,
+      ceiling_height = 2.4,
       insulation_quality = 'average',
       climate_zone = 'moderate',
-      num_windows = Math.floor(home_size_sqft / 200)
+      num_windows = Math.floor(home_size_sqm / 20)
     } = input;
 
-    // Base calculation: 30-60 BTU per square foot depending on factors
-    let btuPerSqFt = 40; // baseline
+    // Base calculation: 0.1-0.15 kW per square metre depending on factors
+    let kwPerSqM = 0.12; // baseline for UK
 
     // Adjust for climate
     const climateMultipliers = {
@@ -86,7 +86,7 @@ export const toolHandlers = {
       moderate: 1.0,
       warm: 0.7
     };
-    btuPerSqFt *= climateMultipliers[climate_zone];
+    kwPerSqM *= climateMultipliers[climate_zone];
 
     // Adjust for insulation
     const insulationMultipliers = {
@@ -95,32 +95,32 @@ export const toolHandlers = {
       good: 0.85,
       excellent: 0.7
     };
-    btuPerSqFt *= insulationMultipliers[insulation_quality];
+    kwPerSqM *= insulationMultipliers[insulation_quality];
 
     // Adjust for ceiling height
-    if (ceiling_height > 8) {
-      btuPerSqFt *= (ceiling_height / 8);
+    if (ceiling_height > 2.4) {
+      kwPerSqM *= (ceiling_height / 2.4);
     }
 
-    // Adjust for windows (heat loss)
-    const windowLoss = num_windows * 1000; // ~1000 BTU per window
+    // Adjust for windows (heat loss) - ~0.3kW per window
+    const windowLoss = num_windows * 0.3;
 
-    const totalBTU = Math.round((home_size_sqft * btuPerSqFt) + windowLoss);
-    const recommendedBoilerSize = Math.round(totalBTU / 1000) * 1000; // Round to nearest 1000
+    const totalKW = Math.round((home_size_sqm * kwPerSqM + windowLoss) * 10) / 10; // Round to 1 decimal
+    const recommendedBoilerSize = Math.ceil(totalKW); // Round up to nearest kW
 
     return {
-      total_btu_required: totalBTU,
-      recommended_boiler_size: recommendedBoilerSize,
-      btu_per_sqft: Math.round(btuPerSqFt),
+      total_kw_required: totalKW,
+      recommended_boiler_size_kw: recommendedBoilerSize,
+      kw_per_sqm: Math.round(kwPerSqM * 100) / 100,
       breakdown: {
-        base_heating: Math.round(home_size_sqft * btuPerSqFt),
-        window_loss: windowLoss,
-        safety_margin: Math.round(totalBTU * 0.15)
+        base_heating: Math.round(home_size_sqm * kwPerSqM * 10) / 10,
+        window_loss: Math.round(windowLoss * 10) / 10,
+        safety_margin: Math.round(totalKW * 0.15 * 10) / 10
       },
       recommendations: {
-        min_output: Math.round(totalBTU * 0.9),
-        ideal_output: recommendedBoilerSize,
-        max_output: Math.round(totalBTU * 1.3)
+        min_output_kw: Math.round(totalKW * 0.9),
+        ideal_output_kw: recommendedBoilerSize,
+        max_output_kw: Math.ceil(totalKW * 1.3)
       }
     };
   },
@@ -237,8 +237,8 @@ export const toolHandlers = {
 };
 
 // Helper functions
-function calculateBTU(sqft) {
-  return sqft * 40; // Simple baseline
+function calculateKW(sqm) {
+  return Math.round(sqm * 0.12); // Simple baseline for UK: ~0.12kW per m²
 }
 
 function matchesBudget(priceRange, budget) {
@@ -266,9 +266,9 @@ function generateRecommendationReasoning(recommendations, input) {
   }
 
   const topPick = recommendations[0];
-  return `Based on your ${input.home_size_sqft} sq ft home and ${input.fuel_type} fuel preference, ` +
+  return `Based on your ${input.home_size_sqm}m² home and ${input.fuel_type} fuel preference, ` +
          `the ${topPick.name} is recommended for its ${topPick.efficiency}% efficiency and ` +
-         `${topPick.output_btu} BTU output.`;
+         `${topPick.output_kw}kW output.`;
 }
 
 function getDiagnosisForSymptom(symptom, errorCode, age, type) {

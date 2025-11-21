@@ -1,4 +1,4 @@
-// Boiler knowledge database
+// Boiler knowledge database (UK - all measurements in metric)
 export const boilerDatabase = [
   // Combi Boilers - Gas
   {
@@ -7,7 +7,7 @@ export const boilerDatabase = [
     manufacturer: 'Worcester Bosch',
     type: 'combi',
     fuel_type: 'gas',
-    output_btu: 102000, // 30kW
+    output_kw: 30,
     efficiency: 94,
     price_range: 'premium',
     warranty_years: 10,
@@ -23,7 +23,7 @@ export const boilerDatabase = [
     manufacturer: 'Vaillant',
     type: 'combi',
     fuel_type: 'gas',
-    output_btu: 95000, // 28kW
+    output_kw: 28,
     efficiency: 94,
     price_range: 'premium',
     warranty_years: 7,
@@ -39,7 +39,7 @@ export const boilerDatabase = [
     manufacturer: 'Ideal',
     type: 'combi',
     fuel_type: 'gas',
-    output_btu: 102000, // 30kW
+    output_kw: 30,
     efficiency: 92,
     price_range: 'mid_range',
     warranty_years: 7,
@@ -55,7 +55,7 @@ export const boilerDatabase = [
     manufacturer: 'Baxi',
     type: 'combi',
     fuel_type: 'gas',
-    output_btu: 68000, // 20kW
+    output_kw: 20,
     efficiency: 89.9,
     price_range: 'budget',
     warranty_years: 5,
@@ -73,7 +73,7 @@ export const boilerDatabase = [
     manufacturer: 'Worcester Bosch',
     type: 'system',
     fuel_type: 'gas',
-    output_btu: 85000, // 25kW
+    output_kw: 25,
     efficiency: 94,
     price_range: 'premium',
     warranty_years: 10,
@@ -89,7 +89,7 @@ export const boilerDatabase = [
     manufacturer: 'Vaillant',
     type: 'system',
     fuel_type: 'gas',
-    output_btu: 102000, // 30kW
+    output_kw: 30,
     efficiency: 93,
     price_range: 'premium',
     warranty_years: 7,
@@ -107,7 +107,7 @@ export const boilerDatabase = [
     manufacturer: 'Ideal',
     type: 'conventional',
     fuel_type: 'gas',
-    output_btu: 102000, // 30kW
+    output_kw: 30,
     efficiency: 89,
     price_range: 'mid_range',
     warranty_years: 5,
@@ -125,7 +125,7 @@ export const boilerDatabase = [
     manufacturer: 'Grant',
     type: 'combi',
     fuel_type: 'oil',
-    output_btu: 75000, // 22kW
+    output_kw: 22,
     efficiency: 92,
     price_range: 'mid_range',
     warranty_years: 5,
@@ -140,7 +140,7 @@ export const boilerDatabase = [
     manufacturer: 'Firebird',
     type: 'combi',
     fuel_type: 'oil',
-    output_btu: 90000, // 26kW
+    output_kw: 26,
     efficiency: 90,
     price_range: 'mid_range',
     warranty_years: 5,
@@ -157,7 +157,7 @@ export const boilerDatabase = [
     manufacturer: 'Electric Heating Company',
     type: 'system',
     fuel_type: 'electric',
-    output_btu: 40950, // 12kW
+    output_kw: 12,
     efficiency: 99.9,
     price_range: 'mid_range',
     warranty_years: 2,
@@ -172,7 +172,7 @@ export const boilerDatabase = [
     manufacturer: 'Heatrae Sadia',
     type: 'system',
     fuel_type: 'electric',
-    output_btu: 20475, // 6kW
+    output_kw: 6,
     efficiency: 99.8,
     price_range: 'budget',
     warranty_years: 2,
@@ -189,7 +189,7 @@ export const boilerDatabase = [
     manufacturer: 'Worcester Bosch',
     type: 'combi',
     fuel_type: 'lpg',
-    output_btu: 95000, // 28kW
+    output_kw: 28,
     efficiency: 93,
     price_range: 'premium',
     warranty_years: 10,
