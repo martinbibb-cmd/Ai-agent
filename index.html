@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0; url=public/index.html">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirecting to AI Agent...</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+        }
+        .loading {
+            padding: 40px;
+        }
+        .loading h1 {
+            font-size: 32px;
+            margin-bottom: 16px;
+        }
+        .loading p {
+            font-size: 18px;
+            opacity: 0.9;
+        }
+        .spinner {
+            margin: 20px auto;
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    <script>
+        // Fallback if meta refresh doesn't work
+        window.location.href = 'public/index.html';
+    </script>
+</head>
+<body>
+    <div class="loading">
+        <h1>🤖 AI Agent</h1>
+        <div class="spinner"></div>
+        <p>Redirecting to application...</p>
+        <p style="font-size: 14px; margin-top: 20px;">
+            If not redirected, <a href="public/index.html" style="color: white; text-decoration: underline;">click here</a>
+        </p>
+    </div>
+</body>
+</html>
