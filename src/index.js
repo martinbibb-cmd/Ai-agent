@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
+import { DocumentManager } from './documents/manager.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -22,6 +23,12 @@ YOUR CAPABILITIES:
 - Guide users through survey completion
 - Save and track survey responses
 - Help analyze survey data
+
+**Document Knowledge:**
+- Search uploaded documents (manuals, spec sheets, guides) for specific information
+- Answer questions based on uploaded PDF documents
+- Reference specific pages and sections from documents
+- List available documents and their contents
 
 **Boiler & Heating Expertise (UK-focused):**
 - Recommend appropriate boilers based on home size, fuel type, and requirements
@@ -75,6 +82,11 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // Initialize Document Manager if R2 and D1 are available
+    const documentManager = (env.DOCUMENTS && env.DB)
+      ? new DocumentManager(env.DOCUMENTS, env.DB)
+      : null;
+
     // Serve personas.json
     if (url.pathname === '/data/personas.json') {
       return new Response(JSON.stringify(personas), {
@@ -83,6 +95,126 @@ export default {
           'Content-Type': 'application/json',
         },
       });
+    }
+
+    // Upload document endpoint
+    if (url.pathname === '/documents/upload' && request.method === 'POST') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const formData = await request.formData();
+        const file = formData.get('file');
+        const category = formData.get('category') || 'general';
+        const tags = formData.get('tags') ? JSON.parse(formData.get('tags')) : [];
+
+        if (!file) {
+          return new Response(JSON.stringify({
+            error: 'No file provided'
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const result = await documentManager.uploadDocument(file, {
+          filename: file.name,
+          contentType: file.type,
+          category,
+          tags,
+          uploadedBy: 'user'
+        });
+
+        return new Response(JSON.stringify({
+          success: true,
+          document: result
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('Upload error:', error);
+        return new Response(JSON.stringify({
+          error: 'Upload failed',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // List documents endpoint
+    if (url.pathname === '/documents' && request.method === 'GET') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({ documents: [] }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const category = url.searchParams.get('category');
+        const limit = parseInt(url.searchParams.get('limit') || '50');
+
+        const documents = await documentManager.listDocuments({ category, limit });
+
+        return new Response(JSON.stringify({
+          documents,
+          count: documents.length
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('List error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to list documents',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Delete document endpoint
+    if (url.pathname.startsWith('/documents/') && request.method === 'DELETE') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const documentId = url.pathname.split('/')[2];
+        await documentManager.deleteDocument(documentId);
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Document deleted'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('Delete error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to delete document',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Agent endpoint with tool calling
@@ -154,7 +286,8 @@ export default {
                     };
                   }
 
-                  const result = await handler(toolUse.input);
+                  // Pass documentManager to document-related tools
+                  const result = await handler(toolUse.input, documentManager);
                   return {
                     type: 'tool_result',
                     tool_use_id: toolUse.id,

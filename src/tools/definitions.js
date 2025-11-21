@@ -217,5 +217,41 @@ export const tools = [
       },
       required: ["survey_id", "question_id", "response"]
     }
+  },
+  {
+    name: "search_documents",
+    description: "Search uploaded documents (PDFs, manuals, specs) for specific information. Use this when users ask about content from uploaded documents or need specific details from manuals.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query (keywords or phrases to find in documents)"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results to return (default 10)"
+        }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    name: "list_documents",
+    description: "List all uploaded documents with optional filtering. Use this to show users what documents are available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          description: "Filter by category (e.g., 'manuals', 'specs', 'guides')"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of documents to return (default 20)"
+        }
+      },
+      required: []
+    }
   }
 ];
