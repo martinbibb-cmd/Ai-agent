@@ -32,6 +32,7 @@
             color: white;
             padding: 24px;
             text-align: center;
+            position: relative;
         }
 
         .header h1 {
@@ -42,6 +43,33 @@
         .header p {
             opacity: 0.9;
             font-size: 14px;
+        }
+
+        .header-nav {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .nav-btn {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
         }
 
         .persona-selector {
@@ -200,6 +228,9 @@
 <body>
     <div class="container">
         <div class="header">
+            <div class="header-nav">
+                <a href="/documents.html" class="nav-btn">📄 Documents</a>
+            </div>
             <h1>🤖 AI Agent Assistant</h1>
             <p>Multi-persona support for surveys and boiler inquiries</p>
         </div>
