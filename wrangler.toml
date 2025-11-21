@@ -1,6 +1,7 @@
 name = "ai-agent"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare Workers configuration
 workers_dev = true
@@ -18,11 +19,10 @@ binding = "DOCUMENTS"
 bucket_name = "agentstorage"
 
 # D1 database for document metadata and searchable text
-# Uncomment and add database_id after creating: wrangler d1 create agent-db
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "agent-db"
-# database_id = "YOUR_DB_ID_HERE"
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-db"
+database_id = "0bef3501-1915-4566-8fa9-2f63f1d3bd84"
 
 # Asset bindings for serving static files
 [assets]
