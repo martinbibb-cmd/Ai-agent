@@ -15,7 +15,17 @@ CREATE TABLE IF NOT EXISTS documents (
   tags TEXT, -- JSON array of tags
   r2_key TEXT NOT NULL, -- R2 storage key
   page_count INTEGER,
-  status TEXT DEFAULT 'processed' -- uploaded, processing, processed, error
+  status TEXT DEFAULT 'processed', -- uploaded, processing, processed, error
+
+  -- Enhanced parser fields (v2.0)
+  format TEXT, -- File format detected by parser (pdf, txt, md, json, etc.)
+  language TEXT, -- Detected language
+  parsed_metadata TEXT, -- Full metadata JSON from parser
+  parsed_structure TEXT, -- Document structure JSON from parser
+  parser_version TEXT, -- Parser version used
+  parse_timestamp TEXT, -- When parsing occurred
+  word_count INTEGER, -- Total word count
+  character_count INTEGER -- Total character count
 );
 
 -- Document pages - stores extracted text per page for better search
@@ -24,6 +34,10 @@ CREATE TABLE IF NOT EXISTS document_pages (
   document_id TEXT NOT NULL,
   page_number INTEGER NOT NULL,
   content TEXT NOT NULL, -- Extracted text from the page
+
+  -- Enhanced parser fields (v2.0)
+  page_metadata TEXT, -- Page-level metadata JSON (headers, word_count, etc.)
+
   FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
