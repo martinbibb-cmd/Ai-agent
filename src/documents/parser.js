@@ -110,7 +110,9 @@ export function extractTextFallback(pdfBuffer) {
     // Join all text blocks and normalize whitespace
     const fullText = textBlocks
       .join(' ')
-      .replace(/\s+/g, ' ')
+      .replace(/\0/g, '') // Remove null bytes
+      .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, ' ') // Remove control characters except \n, \r, \t
+      .replace(/\s+/g, ' ') // Normalize whitespace
       .trim();
 
     return fullText || 'No extractable text found in PDF';

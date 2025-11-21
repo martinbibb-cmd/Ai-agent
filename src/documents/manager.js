@@ -69,18 +69,33 @@ export class DocumentManager {
 
       // Store page content
       for (const page of parsedData.pages) {
+        // Clean and sanitize text to prevent SQL issues
+        const cleanText = page.text
+          .replace(/\0/g, '') // Remove null bytes
+          .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ') // Remove control characters
+          .trim();
+
+        if (cleanText.length === 0) continue; // Skip empty pages
+
         await this.db.prepare(`
           INSERT INTO document_pages (document_id, page_number, content)
           VALUES (?, ?, ?)
-        `).bind(documentId, page.pageNumber, page.text).run();
+        `).bind(documentId, page.pageNumber, cleanText).run();
 
         // Store chunks for better search
-        const chunks = chunkText(page.text);
+        const chunks = chunkText(cleanText);
         for (let i = 0; i < chunks.length; i++) {
-          await this.db.prepare(`
-            INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
-            VALUES (?, ?, ?, ?)
-          `).bind(documentId, page.pageNumber, chunks[i], i).run();
+          const cleanChunk = chunks[i]
+            .replace(/\0/g, '')
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ')
+            .trim();
+
+          if (cleanChunk.length > 0) {
+            await this.db.prepare(`
+              INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
+              VALUES (?, ?, ?, ?)
+            `).bind(documentId, page.pageNumber, cleanChunk, i).run();
+          }
         }
       }
 
