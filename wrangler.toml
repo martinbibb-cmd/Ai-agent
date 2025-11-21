@@ -12,6 +12,17 @@ workers_dev = true
 # Secrets (set via: wrangler secret put ANTHROPIC_API_KEY)
 # ANTHROPIC_API_KEY is already configured in Cloudflare dashboard
 
+# R2 bucket for document storage (create with: wrangler r2 bucket create agent-documents)
+[[r2_buckets]]
+binding = "DOCUMENTS"
+bucket_name = "agent-documents"
+
+# D1 database for document metadata and searchable text (create with: wrangler d1 create agent-db)
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-db"
+database_id = "YOUR_DB_ID_HERE"
+
 # Asset bindings for serving static files
 [assets]
 directory = "public"

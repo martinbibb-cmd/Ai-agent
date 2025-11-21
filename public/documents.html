@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Manager - AI Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+        }
+
+        .header a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 2px solid white;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .header a:hover {
+            background: white;
+            color: #667eea;
+        }
+
+        .upload-section {
+            padding: 24px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .upload-area {
+            border: 2px dashed #667eea;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f8f9fa;
+        }
+
+        .upload-area.dragover {
+            background: #e7eaff;
+            border-color: #667eea;
+        }
+
+        .upload-form {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+
+        .upload-form select,
+        .upload-form input {
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .upload-form button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .upload-form button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+
+        .upload-form button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .documents-list {
+            padding: 24px;
+        }
+
+        .documents-list h2 {
+            margin-bottom: 16px;
+            color: #333;
+        }
+
+        .document-item {
+            background: #f8f9fa;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .document-info {
+            flex: 1;
+        }
+
+        .document-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .document-meta {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .document-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-delete {
+            padding: 8px 16px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-delete:hover {
+            background: #c82333;
+        }
+
+        .status-message {
+            padding: 12px;
+            margin: 16px 24px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status-message.show {
+            display: block;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .filter-bar select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 Document Manager</h1>
+            <a href="/">← Back to Chat</a>
+        </div>
+
+        <div class="upload-section">
+            <h2 style="margin-bottom: 16px;">Upload New Document</h2>
+            <div class="upload-area" id="uploadArea">
+                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF file here or click to browse</p>
+                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB</p>
+                <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+            </div>
+
+            <div class="upload-form">
+                <select id="categorySelect">
+                    <option value="general">General</option>
+                    <option value="manuals">Manuals</option>
+                    <option value="specs">Specifications</option>
+                    <option value="guides">Guides</option>
+                    <option value="regulations">Regulations</option>
+                </select>
+                <input type="text" id="tagsInput" placeholder="Tags (comma separated)">
+                <button id="uploadButton" disabled>Upload Document</button>
+            </div>
+        </div>
+
+        <div class="status-message" id="statusMessage"></div>
+
+        <div class="documents-list">
+            <h2>📚 Uploaded Documents</h2>
+
+            <div class="filter-bar">
+                <select id="filterCategory">
+                    <option value="">All Categories</option>
+                    <option value="manuals">Manuals</option>
+                    <option value="specs">Specifications</option>
+                    <option value="guides">Guides</option>
+                    <option value="regulations">Regulations</option>
+                    <option value="general">General</option>
+                </select>
+                <button onclick="loadDocuments()" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">Refresh</button>
+            </div>
+
+            <div id="documentsList">
+                <div class="loading">Loading documents...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = window.location.origin;
+        let selectedFile = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDocuments();
+            setupUpload();
+        });
+
+        function setupUpload() {
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            const uploadButton = document.getElementById('uploadButton');
+
+            uploadArea.addEventListener('click', () => fileInput.click());
+
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileSelect(files[0]);
+                }
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFileSelect(e.target.files[0]);
+                }
+            });
+
+            uploadButton.addEventListener('click', uploadDocument);
+        }
+
+        function handleFileSelect(file) {
+            if (file.type !== 'application/pdf') {
+                showStatus('Only PDF files are supported', 'error');
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                showStatus('File size must be less than 10MB', 'error');
+                return;
+            }
+
+            selectedFile = file;
+            document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${file.name}`;
+            document.getElementById('uploadButton').disabled = false;
+        }
+
+        async function uploadDocument() {
+            if (!selectedFile) return;
+
+            const uploadButton = document.getElementById('uploadButton');
+            uploadButton.disabled = true;
+            uploadButton.textContent = 'Uploading...';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                formData.append('category', document.getElementById('categorySelect').value);
+
+                const tags = document.getElementById('tagsInput').value
+                    .split(',')
+                    .map(t => t.trim())
+                    .filter(t => t);
+
+                if (tags.length > 0) {
+                    formData.append('tags', JSON.stringify(tags));
+                }
+
+                const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus(`Document "${result.document.filename}" uploaded successfully!`, 'success');
+                    selectedFile = null;
+                    document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop PDF file here or click to browse';
+                    document.getElementById('tagsInput').value = '';
+                    document.getElementById('fileInput').value = '';
+                    loadDocuments();
+                } else {
+                    showStatus(`Upload failed: ${result.error}`, 'error');
+                }
+
+            } catch (error) {
+                showStatus(`Upload error: ${error.message}`, 'error');
+            } finally {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload Document';
+            }
+        }
+
+        async function loadDocuments() {
+            const documentsList = document.getElementById('documentsList');
+            documentsList.innerHTML = '<div class="loading">Loading documents...</div>';
+
+            try {
+                const category = document.getElementById('filterCategory').value;
+                const url = `${API_BASE_URL}/documents${category ? `?category=${category}` : ''}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.documents && data.documents.length > 0) {
+                    documentsList.innerHTML = data.documents.map(doc => `
+                        <div class="document-item">
+                            <div class="document-info">
+                                <div class="document-name">📄 ${doc.filename}</div>
+                                <div class="document-meta">
+                                    ${doc.page_count} pages • ${formatBytes(doc.file_size)} •
+                                    ${doc.category} •
+                                    ${new Date(doc.uploaded_at).toLocaleDateString()}
+                                </div>
+                            </div>
+                            <div class="document-actions">
+                                <button class="btn-delete" onclick="deleteDocument('${doc.id}', '${doc.filename}')">Delete</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    documentsList.innerHTML = '<div class="empty-state">No documents uploaded yet. Upload your first document above!</div>';
+                }
+
+            } catch (error) {
+                documentsList.innerHTML = `<div class="empty-state">Error loading documents: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteDocument(id, filename) {
+            if (!confirm(`Delete "${filename}"?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/documents/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('Document deleted successfully', 'success');
+                    loadDocuments();
+                } else {
+                    showStatus(`Delete failed: ${result.error}`, 'error');
+                }
+
+            } catch (error) {
+                showStatus(`Delete error: ${error.message}`, 'error');
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type} show`;
+            setTimeout(() => {
+                statusEl.classList.remove('show');
+            }, 5000);
+        }
+
+        // Filter documents when category changes
+        document.getElementById('filterCategory').addEventListener('change', loadDocuments);
+    </script>
+</body>
+</html>

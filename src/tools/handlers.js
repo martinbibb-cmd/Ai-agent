@@ -233,6 +233,74 @@ export const toolHandlers = {
       message: 'Response saved successfully',
       total_responses: responses.length
     };
+  },
+
+  search_documents: async (input, documentManager) => {
+    const { query, limit = 10 } = input;
+
+    if (!documentManager) {
+      return {
+        error: 'Document search is not available. Please ensure documents are uploaded first.'
+      };
+    }
+
+    try {
+      const results = await documentManager.searchDocuments(query, limit);
+
+      return {
+        query,
+        results_count: results.length,
+        results: results.map(r => ({
+          document_id: r.id,
+          filename: r.filename,
+          page_number: r.page_number,
+          snippet: r.snippet || r.content.substring(0, 200) + '...',
+          category: r.category,
+          uploaded_at: r.uploaded_at
+        }))
+      };
+    } catch (error) {
+      return {
+        error: `Search failed: ${error.message}`,
+        query
+      };
+    }
+  },
+
+  list_documents: async (input, documentManager) => {
+    const { category, limit = 20 } = input;
+
+    if (!documentManager) {
+      return {
+        error: 'Document listing is not available.'
+      };
+    }
+
+    try {
+      const documents = await documentManager.listDocuments({
+        category,
+        limit,
+        offset: 0
+      });
+
+      return {
+        documents_count: documents.length,
+        documents: documents.map(d => ({
+          id: d.id,
+          filename: d.filename,
+          category: d.category,
+          page_count: d.page_count,
+          file_size: d.file_size,
+          uploaded_at: d.uploaded_at,
+          tags: d.tags,
+          status: d.status
+        }))
+      };
+    } catch (error) {
+      return {
+        error: `Failed to list documents: ${error.message}`
+      };
+    }
   }
 };
 
