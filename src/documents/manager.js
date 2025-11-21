@@ -83,6 +83,86 @@ export class DocumentManager {
   }
 
   /**
+   * Process an uploaded document to extract text
+   * @param {string} documentId
+   * @returns {Promise<{id: string, filename: string, pageCount: number, status: string}>}
+   */
+  async processDocument(documentId) {
+    try {
+      // Get the document from database
+      const doc = await this.db.prepare(`
+        SELECT * FROM documents WHERE id = ?
+      `).bind(documentId).first();
+
+      if (!doc) {
+        throw new Error('Document not found');
+      }
+
+      // Get the file from R2
+      const fileBuffer = await this.getDocumentFile(documentId);
+
+      // Parse PDF with text extraction
+      let parsedData;
+      try {
+        parsedData = await parsePDF(fileBuffer);
+      } catch (error) {
+        console.error('PDF parsing failed:', error);
+        // Mark as error
+        await this.db.prepare(`
+          UPDATE documents SET status = 'error' WHERE id = ?
+        `).bind(documentId).run();
+        throw error;
+      }
+
+      // Delete existing placeholder page content
+      await this.db.prepare(`
+        DELETE FROM document_pages WHERE document_id = ?
+      `).bind(documentId).run();
+
+      await this.db.prepare(`
+        DELETE FROM document_chunks WHERE document_id = ?
+      `).bind(documentId).run();
+
+      // Store extracted page content
+      for (const page of parsedData.pages) {
+        if (!page.text || page.text.length === 0) continue;
+
+        await this.db.prepare(`
+          INSERT INTO document_pages (document_id, page_number, content)
+          VALUES (?, ?, ?)
+        `).bind(documentId, page.pageNumber, page.text).run();
+
+        // Store chunks for better search
+        const chunks = chunkText(page.text);
+        for (let i = 0; i < chunks.length; i++) {
+          if (chunks[i] && chunks[i].trim().length > 0) {
+            await this.db.prepare(`
+              INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
+              VALUES (?, ?, ?, ?)
+            `).bind(documentId, page.pageNumber, chunks[i].trim(), i).run();
+          }
+        }
+      }
+
+      // Update document status to processed
+      await this.db.prepare(`
+        UPDATE documents SET status = 'processed', page_count = ? WHERE id = ?
+      `).bind(parsedData.pageCount, documentId).run();
+
+      return {
+        id: documentId,
+        filename: doc.filename,
+        pageCount: parsedData.pageCount,
+        status: 'processed'
+      };
+
+    } catch (error) {
+      console.error('Document processing error:', error);
+      throw new Error(`Failed to process document: ${error.message}`);
+    }
+  }
+
+  /**
    * Search documents by text query
    * @param {string} query
    * @param {number} limit

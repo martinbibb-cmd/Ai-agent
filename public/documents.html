@@ -384,27 +384,62 @@
                 const data = await response.json();
 
                 if (data.documents && data.documents.length > 0) {
-                    documentsList.innerHTML = data.documents.map(doc => `
+                    documentsList.innerHTML = data.documents.map(doc => {
+                        const statusBadge = doc.status === 'processed' ? '<span style="color: #10b981;">✓ Processed</span>' :
+                                          doc.status === 'uploaded' ? '<span style="color: #f59e0b;">⚠ Not Processed</span>' :
+                                          '<span style="color: #ef4444;">✗ Error</span>';
+
+                        const processButton = doc.status === 'uploaded' ?
+                            `<button class="btn-process" onclick="processDocument('${doc.id}', '${doc.filename}')" style="background: #10b981; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px;">Process Text</button>` : '';
+
+                        return `
                         <div class="document-item">
                             <div class="document-info">
                                 <div class="document-name">📄 ${doc.filename}</div>
                                 <div class="document-meta">
                                     ${doc.page_count} pages • ${formatBytes(doc.file_size)} •
                                     ${doc.category} •
-                                    ${new Date(doc.uploaded_at).toLocaleDateString()}
+                                    ${new Date(doc.uploaded_at).toLocaleDateString()} •
+                                    ${statusBadge}
                                 </div>
                             </div>
                             <div class="document-actions">
+                                ${processButton}
                                 <button class="btn-delete" onclick="deleteDocument('${doc.id}', '${doc.filename}')">Delete</button>
                             </div>
                         </div>
-                    `).join('');
+                        `;
+                    }).join('');
                 } else {
                     documentsList.innerHTML = '<div class="empty-state">No documents uploaded yet. Upload your first document above!</div>';
                 }
 
             } catch (error) {
                 documentsList.innerHTML = `<div class="empty-state">Error loading documents: ${error.message}</div>`;
+            }
+        }
+
+        async function processDocument(id, filename) {
+            if (!confirm(`Extract text from "${filename}"? This may take a moment.`)) return;
+
+            showStatus('Processing document...', 'info');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/documents/${id}/process`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus(`✓ Document processed successfully! Extracted ${result.document.pageCount} pages`, 'success');
+                    loadDocuments();
+                } else {
+                    showStatus(`Process failed: ${result.error}`, 'error');
+                }
+
+            } catch (error) {
+                showStatus(`Process error: ${error.message}`, 'error');
             }
         }
 
