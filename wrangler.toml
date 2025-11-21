@@ -1,0 +1,17 @@
+name = "ai-agent"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Cloudflare Workers configuration
+workers_dev = true
+
+# Bind the Anthropic API key secret
+[vars]
+# Public variables go here
+
+# Secrets (set via: wrangler secret put ANTHROPIC_API_KEY)
+# ANTHROPIC_API_KEY is already configured in Cloudflare dashboard
+
+# Asset bindings for serving static files
+[assets]
+directory = "public"
