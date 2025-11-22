@@ -92,7 +92,8 @@
     <div id="migrateLog" class="log"></div>
 
     <script>
-        const API_BASE = 'http://localhost:8787';
+        // Auto-detect API base URL (works for both localhost and production)
+        const API_BASE = window.location.origin;
         let selectedFile = null;
 
         // File selection test
