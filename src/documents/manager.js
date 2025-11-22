@@ -104,8 +104,28 @@ export class DocumentManager {
     const r2Key = `documents/${documentId}`;
 
     try {
+      // Validate file
+      if (!file) {
+        throw new Error('No file provided');
+      }
+
+      if (!metadata?.filename) {
+        throw new Error('Filename is required');
+      }
+
       // Store file in R2
       const fileBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
+
+      if (fileBuffer.byteLength === 0) {
+        throw new Error('File is empty');
+      }
+
+      if (fileBuffer.byteLength > 50 * 1024 * 1024) { // 50MB limit
+        throw new Error('File size exceeds 50MB limit');
+      }
+
+      console.log(`Uploading document ${documentId} to R2 bucket (${fileBuffer.byteLength} bytes)`);
+
       await this.r2.put(r2Key, fileBuffer, {
         httpMetadata: {
           contentType: metadata.contentType || 'application/pdf',
@@ -115,6 +135,8 @@ export class DocumentManager {
           uploadedAt: new Date().toISOString(),
         }
       });
+
+      console.log(`Document ${documentId} uploaded to R2 successfully`);
 
       // Sanitize filename to prevent SQL issues
       const cleanFilename = metadata.filename
@@ -143,6 +165,8 @@ export class DocumentManager {
         'uploaded' // Status: uploaded but not processed
       ).run();
 
+      console.log(`Document ${documentId} metadata saved to database`);
+
       // Store a simple placeholder in document_pages
       await this.db.prepare(`
         INSERT INTO document_pages (document_id, page_number, content)
@@ -158,6 +182,13 @@ export class DocumentManager {
 
     } catch (error) {
       console.error('Document upload error:', error);
+
+      // Clean up R2 if it was uploaded
+      try {
+        await this.r2.delete(r2Key);
+      } catch (e) {
+        console.error('Failed to clean up R2 object:', e);
+      }
 
       // Mark as error if metadata was created
       try {
@@ -181,6 +212,8 @@ export class DocumentManager {
   async processDocument(documentId) {
     await this.initialized;
     try {
+      console.log(`Processing document ${documentId}`);
+
       // Get the document from database
       const doc = await this.db.prepare(`
         SELECT * FROM documents WHERE id = ?
@@ -190,24 +223,29 @@ export class DocumentManager {
         throw new Error('Document not found');
       }
 
+      console.log(`Found document: ${doc.filename} (${doc.content_type})`);
+
       // Get the file from R2
       const fileBuffer = await this.getDocumentFile(documentId);
+      console.log(`Retrieved file from R2: ${fileBuffer.byteLength} bytes`);
 
       // Parse document with enhanced parser
       let parsedData;
       try {
+        console.log(`Starting PDF parsing for ${doc.filename}`);
         parsedData = await this.parser.parse(fileBuffer, {
           name: doc.filename,
           type: doc.content_type,
           size: doc.file_size
         });
+        console.log(`PDF parsing completed: ${parsedData.pages.length} pages extracted`);
       } catch (error) {
         console.error('Document parsing failed:', error);
         // Mark as error
         await this.db.prepare(`
           UPDATE documents SET status = 'error' WHERE id = ?
         `).bind(documentId).run();
-        throw error;
+        throw new Error(`PDF parsing failed: ${error.message}. This could be due to: corrupted PDF, encrypted PDF, or unsupported PDF format.`);
       }
 
       // Delete existing placeholder page content
