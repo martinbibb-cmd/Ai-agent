@@ -46,19 +46,30 @@ export async function migrateFTSIndex(database) {
 
     // Step 4: Rebuild index from existing data
     console.log('Rebuilding FTS index from existing documents...');
-    const result = await database.prepare(`
-      INSERT INTO documents_fts(rowid, document_id, filename, content)
-      SELECT
-        dp.id,
-        dp.document_id,
-        d.filename,
-        dp.content
-      FROM document_pages dp
-      JOIN documents d ON dp.document_id = d.id
-    `).run();
 
-    console.log(`FTS index rebuilt successfully! Indexed ${result.changes || 0} pages.`);
-    return { success: true, indexedPages: result.changes || 0 };
+    // Check if there are any documents to index
+    const countResult = await database.prepare(`
+      SELECT COUNT(*) as count FROM document_pages
+    `).first();
+
+    const pageCount = countResult?.count || 0;
+
+    if (pageCount > 0) {
+      // Only insert if there are pages to index
+      await database.prepare(`
+        INSERT INTO documents_fts(rowid, document_id, filename, content)
+        SELECT
+          dp.id,
+          dp.document_id,
+          d.filename,
+          dp.content
+        FROM document_pages dp
+        JOIN documents d ON dp.document_id = d.id
+      `).run();
+    }
+
+    console.log(`FTS index rebuilt successfully! Indexed ${pageCount} pages.`);
+    return { success: true, indexedPages: pageCount };
 
   } catch (error) {
     console.error('FTS migration failed:', error);
