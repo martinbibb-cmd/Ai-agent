@@ -14,8 +14,11 @@ export class DocumentManager {
 
   async initialize() {
     try {
-      const schema = `
-        CREATE TABLE IF NOT EXISTS documents (
+      console.log('Initializing document storage schema...');
+
+      // D1 requires individual statement execution
+      const statements = [
+        `CREATE TABLE IF NOT EXISTS documents (
           id TEXT PRIMARY KEY,
           filename TEXT NOT NULL,
           original_filename TEXT NOT NULL,
@@ -28,7 +31,6 @@ export class DocumentManager {
           r2_key TEXT NOT NULL,
           page_count INTEGER,
           status TEXT DEFAULT 'processed',
-
           format TEXT,
           language TEXT,
           parsed_metadata TEXT,
@@ -37,58 +39,194 @@ export class DocumentManager {
           parse_timestamp TEXT,
           word_count INTEGER,
           character_count INTEGER
-        );
+        )`,
 
-        CREATE TABLE IF NOT EXISTS document_pages (
+        `CREATE TABLE IF NOT EXISTS document_pages (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           document_id TEXT NOT NULL,
           page_number INTEGER NOT NULL,
           content TEXT NOT NULL,
           page_metadata TEXT,
           FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-        );
+        )`,
 
-        CREATE TABLE IF NOT EXISTS document_chunks (
+        `CREATE TABLE IF NOT EXISTS document_chunks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           document_id TEXT NOT NULL,
           page_number INTEGER,
           chunk_text TEXT NOT NULL,
           chunk_index INTEGER NOT NULL,
           FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-        );
+        )`,
 
-        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-          document_id,
-          filename,
-          content,
-          content='document_pages',
-          content_rowid='id'
-        );
+        `CREATE INDEX IF NOT EXISTS idx_documents_uploaded_at ON documents(uploaded_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)`,
+        `CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status)`,
+        `CREATE INDEX IF NOT EXISTS idx_document_pages_document_id ON document_pages(document_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id)`
+      ];
 
-        CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON document_pages BEGIN
-          INSERT INTO documents_fts(rowid, document_id, filename, content)
-          SELECT
-            new.id,
-            new.document_id,
-            (SELECT filename FROM documents WHERE id = new.document_id),
-            new.content;
-        END;
+      // Execute each statement individually
+      for (const statement of statements) {
+        await this.db.prepare(statement).run();
+      }
 
-        CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON document_pages BEGIN
-          DELETE FROM documents_fts WHERE rowid = old.id;
-        END;
+      console.log('Document storage schema initialized successfully');
 
-        CREATE INDEX IF NOT EXISTS idx_documents_uploaded_at ON documents(uploaded_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
-        CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
-        CREATE INDEX IF NOT EXISTS idx_document_pages_document_id ON document_pages(document_id);
-        CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id);
-      `;
+      // Try to initialize FTS - this might fail if already exists, which is OK
+      try {
+        await this.initializeFTS();
+      } catch (ftsError) {
+        console.log('FTS initialization skipped (may already exist):', ftsError.message);
+      }
 
-      await this.db.exec(schema);
+      return true;
     } catch (error) {
       console.error('Failed to initialize document schema:', error);
-      throw new Error('Document storage is not configured correctly.');
+      console.error('Error details:', error.message, error.stack);
+      throw new Error(`Document storage initialization failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Initialize Full Text Search (FTS) tables and triggers
+   */
+  async initializeFTS() {
+    try {
+      console.log('Initializing FTS tables...');
+
+      // Check if FTS table exists
+      const tableExists = await this.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts'
+      `).first();
+
+      if (!tableExists) {
+        console.log('Creating FTS table...');
+
+        // Create FTS virtual table
+        await this.db.prepare(`
+          CREATE VIRTUAL TABLE documents_fts USING fts5(
+            document_id UNINDEXED,
+            filename,
+            content,
+            content='document_pages',
+            content_rowid='id'
+          )
+        `).run();
+
+        // Create insert trigger
+        await this.db.prepare(`
+          CREATE TRIGGER documents_fts_insert AFTER INSERT ON document_pages BEGIN
+            INSERT INTO documents_fts(rowid, document_id, filename, content)
+            SELECT
+              new.id,
+              new.document_id,
+              (SELECT filename FROM documents WHERE id = new.document_id),
+              new.content;
+          END
+        `).run();
+
+        // Create delete trigger
+        await this.db.prepare(`
+          CREATE TRIGGER documents_fts_delete AFTER DELETE ON document_pages BEGIN
+            DELETE FROM documents_fts WHERE rowid = old.id;
+          END
+        `).run();
+
+        console.log('FTS tables and triggers created successfully');
+      } else {
+        console.log('FTS table already exists');
+      }
+
+      return true;
+    } catch (error) {
+      console.error('FTS initialization error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Rebuild FTS index from existing data
+   */
+  async rebuildFTSIndex() {
+    try {
+      console.log('Rebuilding FTS index...');
+
+      // Clear existing FTS data
+      await this.db.prepare(`DELETE FROM documents_fts`).run();
+
+      // Rebuild from document_pages
+      const pages = await this.db.prepare(`
+        SELECT
+          dp.id as rowid,
+          dp.document_id,
+          d.filename,
+          dp.content
+        FROM document_pages dp
+        JOIN documents d ON dp.document_id = d.id
+      `).all();
+
+      console.log(`Rebuilding FTS index for ${pages.results?.length || 0} pages...`);
+
+      // Insert each page into FTS
+      for (const page of (pages.results || [])) {
+        await this.db.prepare(`
+          INSERT INTO documents_fts(rowid, document_id, filename, content)
+          VALUES (?, ?, ?, ?)
+        `).bind(page.rowid, page.document_id, page.filename, page.content).run();
+      }
+
+      console.log('FTS index rebuilt successfully');
+      return { success: true, pageCount: pages.results?.length || 0 };
+    } catch (error) {
+      console.error('FTS rebuild error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check FTS health
+   */
+  async checkFTSHealth() {
+    try {
+      // Check if FTS table exists
+      const ftsTable = await this.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts'
+      `).first();
+
+      if (!ftsTable) {
+        return {
+          exists: false,
+          healthy: false,
+          message: 'FTS table does not exist'
+        };
+      }
+
+      // Count FTS entries
+      const ftsCount = await this.db.prepare(`
+        SELECT COUNT(*) as count FROM documents_fts
+      `).first();
+
+      // Count document pages
+      const pagesCount = await this.db.prepare(`
+        SELECT COUNT(*) as count FROM document_pages
+      `).first();
+
+      const healthy = ftsCount.count === pagesCount.count;
+
+      return {
+        exists: true,
+        healthy,
+        ftsCount: ftsCount.count,
+        pagesCount: pagesCount.count,
+        message: healthy ? 'FTS index is healthy' : 'FTS index needs rebuild'
+      };
+    } catch (error) {
+      return {
+        exists: false,
+        healthy: false,
+        error: error.message
+      };
     }
   }
 

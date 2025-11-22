@@ -303,6 +303,68 @@ export default {
       }
     }
 
+    // FTS health check endpoint
+    if (url.pathname === '/api/documents/fts/health' && request.method === 'GET') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          exists: false,
+          healthy: false,
+          error: 'Document storage not configured'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const health = await documentManager.checkFTSHealth();
+        return new Response(JSON.stringify(health), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('FTS health check error:', error);
+        return new Response(JSON.stringify({
+          exists: false,
+          healthy: false,
+          error: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // FTS migration endpoint
+    if (url.pathname === '/api/documents/fts/migrate' && request.method === 'POST') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const result = await documentManager.rebuildFTSIndex();
+        return new Response(JSON.stringify({
+          success: true,
+          ...result
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('FTS migration error:', error);
+        return new Response(JSON.stringify({
+          success: false,
+          error: `FTS migration failed: ${error.message}`
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Agent endpoint with tool calling
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
@@ -497,7 +559,7 @@ export default {
           'Issue diagnosis',
           'Cost estimation',
           'Model comparison',
-          'Document search'
+          'Document search with FTS'
         ],
         endpoints: {
           '/': 'GET - Chat Interface',
@@ -509,6 +571,8 @@ export default {
           '/api/documents/{id}': 'DELETE - Delete document',
           '/api/documents/{id}/process': 'POST - Process document text',
           '/api/documents/{id}/json': 'GET - Get processed document JSON',
+          '/api/documents/fts/health': 'GET - Check FTS index health',
+          '/api/documents/fts/migrate': 'POST - Rebuild FTS index',
           '/voices': 'GET - Get voice mapping',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
