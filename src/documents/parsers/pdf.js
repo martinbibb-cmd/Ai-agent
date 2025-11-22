@@ -1,16 +1,15 @@
 /**
  * Enhanced PDF Parser with structured JSON output
- * Extracts text, metadata, and structure from PDF files using PDF.js
+ * Extracts text, metadata, and structure from PDF files using unpdf
+ * Optimized for Cloudflare Workers and edge runtimes
  */
 
 import { BaseParser } from './base.js';
-import * as pdfjsLib from 'pdfjs-dist';
+import { getDocumentProxy } from 'unpdf';
 
 export class PDFParser extends BaseParser {
   constructor(options = {}) {
     super(options);
-    // Disable worker for Cloudflare Workers environment
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
   }
 
   /**
@@ -21,38 +20,24 @@ export class PDFParser extends BaseParser {
    */
   async parse(buffer, fileInfo = {}) {
     try {
-      const uint8Array = new Uint8Array(buffer);
-
-      // Load PDF document using PDF.js
-      const loadingTask = pdfjsLib.getDocument({
-        data: uint8Array,
-        useWorkerFetch: false,
-        isEvalSupported: false,
-        useSystemFonts: true
-      });
-
-      const pdfDocument = await loadingTask.promise;
+      // Get PDF document proxy using unpdf
+      const pdf = await getDocumentProxy(new Uint8Array(buffer));
 
       // Extract metadata
-      const pdfMetadata = await pdfDocument.getMetadata().catch(() => ({ info: {}, metadata: null }));
-      const metadata = this.extractPDFMetadata(pdfMetadata, fileInfo);
+      const pdfMetadata = await pdf.getMetadata().catch(() => ({ info: {} }));
+      const metadata = this.extractPDFMetadata(pdfMetadata.info, fileInfo);
 
       // Extract text from all pages
       const pages = [];
-      const numPages = pdfDocument.numPages;
+      const numPages = pdf.numPages;
 
       for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        const page = await pdfDocument.getPage(pageNum);
+        const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
 
         // Combine text items into readable text
         const pageText = textContent.items
-          .map(item => {
-            if (typeof item.str === 'string') {
-              return item.str;
-            }
-            return '';
-          })
+          .map(item => item.str || '')
           .join(' ');
 
         const cleanText = this.sanitizeText(pageText);
@@ -70,8 +55,7 @@ export class PDFParser extends BaseParser {
       const chunks = this.chunkText(fullText);
 
       // Cleanup
-      await pdfDocument.cleanup();
-      await pdfDocument.destroy();
+      await pdf.destroy();
 
       return {
         format: 'pdf',
@@ -88,7 +72,7 @@ export class PDFParser extends BaseParser {
         parser: {
           name: 'PDFParser',
           version: '3.0',
-          method: 'pdfjs-extraction'
+          method: 'unpdf-extraction'
         }
       };
 
@@ -126,14 +110,12 @@ export class PDFParser extends BaseParser {
   }
 
   /**
-   * Extract metadata from PDF.js metadata object
-   * @param {Object} pdfMetadata - PDF.js metadata object
+   * Extract metadata from unpdf info object
+   * @param {Object} info - unpdf info object
    * @param {Object} fileInfo - File information
    * @returns {Object}
    */
-  extractPDFMetadata(pdfMetadata, fileInfo) {
-    const info = pdfMetadata?.info || {};
-
+  extractPDFMetadata(info = {}, fileInfo) {
     const metadata = {
       title: info.Title || null,
       author: info.Author || null,
