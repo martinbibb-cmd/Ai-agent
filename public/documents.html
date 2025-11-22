@@ -212,6 +212,90 @@
             border: 2px solid #ddd;
             border-radius: 6px;
         }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            .upload-section,
+            .documents-section {
+                padding: 16px;
+            }
+
+            .upload-form {
+                flex-direction: column;
+            }
+
+            .upload-form select,
+            .upload-form input,
+            .upload-form button {
+                width: 100%;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+            }
+
+            .filter-bar select {
+                width: 100%;
+            }
+
+            .document-card {
+                padding: 12px;
+            }
+
+            .document-info h3 {
+                font-size: 16px;
+            }
+
+            .document-actions {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .document-actions button {
+                width: 100%;
+            }
+
+            /* Better touch targets */
+            button {
+                min-height: 44px;
+                font-size: 16px;
+            }
+
+            /* Prevent zoom on input focus */
+            input, select {
+                font-size: 16px;
+            }
+        }
+
+        /* Very small mobile devices */
+        @media (max-width: 480px) {
+            .container {
+                border-radius: 0;
+            }
+
+            .upload-area {
+                padding: 20px;
+            }
+
+            .document-meta {
+                flex-direction: column;
+                gap: 4px;
+            }
+        }
     </style>
 </head>
 <body>
