@@ -266,7 +266,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = window.location.origin;
+        const API_BASE_URL = `${window.location.origin}/api`;
         let selectedFile = null;
 
         // Initialize
@@ -346,12 +346,10 @@
                     formData.append('tags', JSON.stringify(tags));
                 }
 
-                const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+                const result = await fetchJson(`${API_BASE_URL}/documents/upload`, {
                     method: 'POST',
                     body: formData
                 });
-
-                const result = await response.json();
 
                 if (result.success) {
                     showStatus(`Document "${result.document.filename}" uploaded successfully!`, 'success');
@@ -380,8 +378,7 @@
                 const category = document.getElementById('filterCategory').value;
                 const url = `${API_BASE_URL}/documents${category ? `?category=${category}` : ''}`;
 
-                const response = await fetch(url);
-                const data = await response.json();
+                const data = await fetchJson(url);
 
                 if (data.documents && data.documents.length > 0) {
                     documentsList.innerHTML = data.documents.map(doc => {
@@ -425,11 +422,9 @@
             showStatus('Processing document...', 'info');
 
             try {
-                const response = await fetch(`${API_BASE_URL}/documents/${id}/process`, {
+                const result = await fetchJson(`${API_BASE_URL}/documents/${id}/process`, {
                     method: 'POST'
                 });
-
-                const result = await response.json();
 
                 if (result.success) {
                     showStatus(`✓ Document processed successfully! Extracted ${result.document.pageCount} pages`, 'success');
@@ -447,11 +442,9 @@
             if (!confirm(`Delete "${filename}"?`)) return;
 
             try {
-                const response = await fetch(`${API_BASE_URL}/documents/${id}`, {
+                const result = await fetchJson(`${API_BASE_URL}/documents/${id}`, {
                     method: 'DELETE'
                 });
-
-                const result = await response.json();
 
                 if (result.success) {
                     showStatus('Document deleted successfully', 'success');
@@ -463,6 +456,24 @@
             } catch (error) {
                 showStatus(`Delete error: ${error.message}`, 'error');
             }
+        }
+
+        async function fetchJson(url, options = {}) {
+            const response = await fetch(url, options);
+            const text = await response.text();
+
+            let data;
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (error) {
+                throw new Error(`Invalid response format: ${text.slice(0, 100)}`);
+            }
+
+            if (!response.ok) {
+                throw new Error(data.error || data.message || `Request failed (${response.status})`);
+            }
+
+            return data;
         }
 
         function formatBytes(bytes) {

@@ -84,8 +84,6 @@ export default {
 
     // Try to serve static assets first (for non-API routes)
     if (!url.pathname.startsWith('/agent') &&
-        !url.pathname.startsWith('/documents/upload') &&
-        !url.pathname.startsWith('/documents/') &&
         !url.pathname.startsWith('/data/') &&
         !url.pathname.startsWith('/voices') &&
         !url.pathname.startsWith('/tools') &&
@@ -117,7 +115,7 @@ export default {
     }
 
     // Upload document endpoint
-    if (url.pathname === '/documents/upload' && request.method === 'POST') {
+    if (url.pathname === '/api/documents/upload' && request.method === 'POST') {
       if (!documentManager) {
         return new Response(JSON.stringify({
           error: 'Document storage not configured'
@@ -170,7 +168,7 @@ export default {
     }
 
     // List documents endpoint
-    if (url.pathname === '/documents' && request.method === 'GET') {
+    if (url.pathname === '/api/documents' && request.method === 'GET') {
       if (!documentManager) {
         return new Response(JSON.stringify({ documents: [] }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -203,7 +201,7 @@ export default {
     }
 
     // Get document as structured JSON (enhanced v2.0 format)
-    if (url.pathname.match(/^\/documents\/[^\/]+\/json$/) && request.method === 'GET') {
+    if (url.pathname.match(/^\/api\/documents\/[^\/]+\/json$/) && request.method === 'GET') {
       if (!documentManager) {
         return new Response(JSON.stringify({
           error: 'Document storage not configured'
@@ -214,7 +212,7 @@ export default {
       }
 
       try {
-        const documentId = url.pathname.split('/')[2];
+        const documentId = url.pathname.split('/')[3];
         const document = await documentManager.getDocumentJSON(documentId);
 
         return new Response(JSON.stringify(document), {
@@ -238,7 +236,7 @@ export default {
     }
 
     // Process document endpoint (extract text from uploaded PDF)
-    if (url.pathname.match(/^\/documents\/[^\/]+\/process$/) && request.method === 'POST') {
+    if (url.pathname.match(/^\/api\/documents\/[^\/]+\/process$/) && request.method === 'POST') {
       if (!documentManager) {
         return new Response(JSON.stringify({
           error: 'Document storage not configured'
@@ -249,7 +247,7 @@ export default {
       }
 
       try {
-        const documentId = url.pathname.split('/')[2];
+        const documentId = url.pathname.split('/')[3];
         const result = await documentManager.processDocument(documentId);
 
         return new Response(JSON.stringify({
@@ -272,7 +270,7 @@ export default {
     }
 
     // Delete document endpoint
-    if (url.pathname.startsWith('/documents/') && request.method === 'DELETE') {
+    if (url.pathname.startsWith('/api/documents/') && request.method === 'DELETE') {
       if (!documentManager) {
         return new Response(JSON.stringify({
           error: 'Document storage not configured'
@@ -283,7 +281,7 @@ export default {
       }
 
       try {
-        const documentId = url.pathname.split('/')[2];
+        const documentId = url.pathname.split('/')[3];
         await documentManager.deleteDocument(documentId);
 
         return new Response(JSON.stringify({
@@ -506,9 +504,11 @@ export default {
           '/documents.html': 'GET - Document Manager',
           '/data/personas.json': 'GET - Get available personas',
           '/agent': 'POST - Send message to agent (with tool calling)',
-          '/documents/upload': 'POST - Upload PDF document',
-          '/documents': 'GET - List documents',
-          '/documents/{id}': 'DELETE - Delete document',
+          '/api/documents/upload': 'POST - Upload PDF document',
+          '/api/documents': 'GET - List documents',
+          '/api/documents/{id}': 'DELETE - Delete document',
+          '/api/documents/{id}/process': 'POST - Process document text',
+          '/api/documents/{id}/json': 'GET - Get processed document JSON',
           '/voices': 'GET - Get voice mapping',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
