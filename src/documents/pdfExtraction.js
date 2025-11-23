@@ -17,7 +17,8 @@ export async function extractTextFromPdfWithOpenAI(env, file, filename) {
   // 1) Upload PDF to OpenAI Files API
   const formData = new FormData();
   formData.append('file', file, filename);
-  formData.append('purpose', 'file-extract');
+  // Use a supported purpose for the Files API so the file can be used with Responses/assistants.
+  formData.append('purpose', 'assistants');
 
   const uploadRes = await fetch('https://api.openai.com/v1/files', {
     method: 'POST',
