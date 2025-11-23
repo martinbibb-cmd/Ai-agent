@@ -301,6 +301,86 @@ export const toolHandlers = {
         error: `Failed to list documents: ${error.message}`
       };
     }
+  },
+
+  upload_document: async (input, documentManager) => {
+    const { file_url, filename, category = 'general', tags = [] } = input;
+
+    if (!documentManager) {
+      return {
+        error: 'Document upload is not available.'
+      };
+    }
+
+    try {
+      // Download file from URL
+      const response = await fetch(file_url);
+      if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Create a file-like object
+      const file = {
+        name: filename,
+        data: buffer,
+        size: buffer.length,
+        type: response.headers.get('content-type') || 'application/octet-stream'
+      };
+
+      // Upload the document
+      const result = await documentManager.uploadDocument(file, {
+        category,
+        tags,
+        uploadedBy: 'ai-agent'
+      });
+
+      // Process the document immediately
+      try {
+        await documentManager.processDocument(result.documentId);
+      } catch (processError) {
+        console.error('Failed to process document after upload:', processError);
+        // Don't fail the upload if processing fails
+      }
+
+      return {
+        success: true,
+        document_id: result.documentId,
+        filename: result.filename,
+        message: `Document "${filename}" uploaded and queued for processing.`,
+        category,
+        tags
+      };
+    } catch (error) {
+      return {
+        error: `Failed to upload document: ${error.message}`
+      };
+    }
+  },
+
+  delete_document: async (input, documentManager) => {
+    const { document_id } = input;
+
+    if (!documentManager) {
+      return {
+        error: 'Document deletion is not available.'
+      };
+    }
+
+    try {
+      await documentManager.deleteDocument(document_id);
+
+      return {
+        success: true,
+        message: `Document ${document_id} deleted successfully.`
+      };
+    } catch (error) {
+      return {
+        error: `Failed to delete document: ${error.message}`
+      };
+    }
   }
 };
 

@@ -294,8 +294,8 @@ export default {
       }
     }
 
-    // Delete document endpoint
-    if (url.pathname.startsWith('/api/documents/') && request.method === 'DELETE') {
+    // Delete document endpoint - must match /api/documents/{id} exactly
+    if (url.pathname.match(/^\/api\/documents\/[^\/]+$/) && request.method === 'DELETE') {
       if (!documentManager) {
         return new Response(JSON.stringify({
           error: 'Document storage not configured'
@@ -307,11 +307,23 @@ export default {
 
       try {
         const documentId = url.pathname.split('/')[3];
+
+        if (!documentId) {
+          return new Response(JSON.stringify({
+            error: 'Document ID is required'
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        console.log(`Attempting to delete document: ${documentId}`);
         await documentManager.deleteDocument(documentId);
 
         return new Response(JSON.stringify({
           success: true,
-          message: 'Document deleted'
+          message: 'Document deleted successfully',
+          documentId: documentId
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -320,7 +332,8 @@ export default {
         console.error('Delete error:', error);
         return new Response(JSON.stringify({
           error: 'Failed to delete document',
-          details: error.message
+          details: error.message,
+          stack: error.stack
         }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -541,6 +554,67 @@ export default {
       });
     }
 
+    // Text-to-Speech endpoint using OpenAI TTS
+    if (url.pathname === '/api/tts' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { text, voice = 'shimmer', personaId } = body;
+
+        if (!text) {
+          return new Response(JSON.stringify({
+            error: 'Text is required'
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Map persona to voice if personaId is provided
+        const selectedVoice = personaId ? (VOICE_MAPPING[personaId] || voice) : voice;
+
+        // Call OpenAI TTS API
+        const openaiResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'tts-1',
+            input: text,
+            voice: selectedVoice,
+            response_format: 'mp3'
+          })
+        });
+
+        if (!openaiResponse.ok) {
+          const errorText = await openaiResponse.text();
+          throw new Error(`OpenAI TTS API error: ${errorText}`);
+        }
+
+        // Return the audio directly
+        const audioData = await openaiResponse.arrayBuffer();
+
+        return new Response(audioData, {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': audioData.byteLength.toString(),
+          },
+        });
+
+      } catch (error) {
+        console.error('TTS error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to generate speech',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Tools info endpoint
     if (url.pathname === '/tools') {
       return new Response(JSON.stringify({
@@ -598,6 +672,7 @@ export default {
           '/api/documents/{id}/json': 'GET - Get processed document JSON',
           '/api/documents/fts/health': 'GET - Check FTS index health',
           '/api/documents/fts/migrate': 'POST - Rebuild FTS index',
+          '/api/tts': 'POST - Generate AI speech from text',
           '/voices': 'GET - Get voice mapping',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
