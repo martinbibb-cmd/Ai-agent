@@ -14,7 +14,8 @@ const VOICE_MAPPING = {
   'heart_of_gold': 'verse',
   'marvin': 'botanica',
   'sonny': 'lumina',
-  'kiss': 'echo'
+  'kiss': 'echo',
+  'r2d2': 'fable'
 };
 
 // Core system prompt shared across all personas
