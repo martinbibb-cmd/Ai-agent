@@ -559,8 +559,17 @@
                     const uploadResult = await uploadFile(selectedFile);
                     uploadedDoc = uploadResult.document;
 
-                    // Add file info to message
-                    const fileInfo = `[I've attached a file: ${selectedFile.name}]`;
+                    // Process the document immediately
+                    try {
+                        await fetch(`${API_BASE_URL}/api/documents/${uploadedDoc.id}/process`, {
+                            method: 'POST'
+                        });
+                    } catch (processError) {
+                        console.error('Failed to process document:', processError);
+                    }
+
+                    // Add file info to message with document ID
+                    const fileInfo = `[I've uploaded a file: "${selectedFile.name}" (Document ID: ${uploadedDoc.id}). Please use the search_documents tool to read its contents if needed.]`;
                     message = message ? `${message}\n\n${fileInfo}` : fileInfo;
 
                     // Clear file selection
@@ -625,13 +634,13 @@
                         <div class="message-label">${label}</div>
                         <div class="message-content">${content}</div>
                         <div class="message-actions">
-                            <button class="speak-btn" onclick="speakMessage('${messageId}', '${label}')" data-message-id="${messageId}">Read Aloud</button>
+                            <button class="speak-btn" onclick="speakMessage('${messageId}')" data-btn-id="${messageId}">Read Aloud</button>
                         </div>
                     </div>
                 `;
-                // Store message content for TTS
+                // Store message content and ID for TTS on the message div itself
+                messageDiv.id = messageId;
                 messageDiv.dataset.messageContent = content;
-                messageDiv.dataset.messageId = messageId;
             } else {
                 messageDiv.innerHTML = `
                     <div>
@@ -648,14 +657,22 @@
         // Text-to-Speech functionality using OpenAI TTS API
         let currentAudio = null;
 
-        async function speakMessage(messageId, personaLabel) {
-            // Find the message element
-            const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-            const button = document.querySelector(`[data-message-id="${messageId}"]`);
+        async function speakMessage(messageId) {
+            // Find the message element by ID
+            const messageEl = document.getElementById(messageId);
+            const button = document.querySelector(`[data-btn-id="${messageId}"]`);
 
-            if (!messageEl) return;
+            if (!messageEl || !button) {
+                console.error('Message element or button not found');
+                return;
+            }
 
             const content = messageEl.dataset.messageContent;
+
+            if (!content) {
+                console.error('No message content found');
+                return;
+            }
 
             // If currently speaking, stop
             if (currentAudio) {
@@ -686,17 +703,19 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to generate speech');
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to generate speech');
                 }
 
                 // Get the audio data
                 const audioBlob = await response.blob();
                 const audioUrl = URL.createObjectURL(audioBlob);
 
-                // Create and play audio
+                // Create audio element
                 const audio = new Audio(audioUrl);
                 currentAudio = audio;
 
+                // Set up event handlers before playing
                 audio.onplay = () => {
                     button.textContent = 'Stop';
                 };
@@ -708,15 +727,31 @@
                     URL.revokeObjectURL(audioUrl);
                 };
 
-                audio.onerror = () => {
+                audio.onerror = (e) => {
+                    console.error('Audio playback error:', e);
                     button.classList.remove('speaking');
                     button.textContent = 'Read Aloud';
                     currentAudio = null;
                     URL.revokeObjectURL(audioUrl);
-                    alert('Failed to play audio');
+                    alert('Audio playback failed. This may be due to browser autoplay restrictions. Please try again.');
                 };
 
-                await audio.play();
+                // Try to play - this is directly triggered by user click so should work
+                try {
+                    await audio.play();
+                } catch (playError) {
+                    console.error('Play error:', playError);
+                    // Handle autoplay policy errors
+                    if (playError.name === 'NotAllowedError') {
+                        alert('Browser blocked audio playback. Please make sure you have interacted with the page and try again.');
+                    } else {
+                        alert('Failed to play audio: ' + playError.message);
+                    }
+                    button.classList.remove('speaking');
+                    button.textContent = 'Read Aloud';
+                    currentAudio = null;
+                    URL.revokeObjectURL(audioUrl);
+                }
 
             } catch (error) {
                 console.error('TTS error:', error);
