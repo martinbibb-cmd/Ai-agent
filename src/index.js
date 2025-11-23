@@ -10,7 +10,8 @@ const VOICE_MAPPING = {
   'rocky': 'alloy',
   'heart_of_gold': 'verse',
   'marvin': 'botanica',
-  'sonny': 'lumina'
+  'sonny': 'lumina',
+  'r2d2': 'echo'
 };
 
 // Core system prompt shared across all personas

@@ -268,6 +268,90 @@
         .current-persona-info strong {
             color: #667eea;
         }
+
+        .file-preview {
+            padding: 16px 24px;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+            display: none;
+        }
+
+        .file-preview.show {
+            display: block;
+        }
+
+        .file-preview-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+
+        .file-preview-item .file-icon {
+            font-size: 24px;
+        }
+
+        .file-preview-item .file-info {
+            flex: 1;
+        }
+
+        .file-preview-item .file-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .file-preview-item .file-size {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .file-preview-item .remove-file {
+            padding: 4px 12px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .file-preview-item .remove-file:hover {
+            background: #c82333;
+        }
+
+        .file-upload-btn {
+            padding: 12px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .file-upload-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+            flex: 1;
+            flex-direction: column;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 12px;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -303,7 +387,18 @@
 
         <div class="loading" id="loading">Thinking...</div>
 
+        <div class="file-preview" id="filePreview">
+            <!-- File preview will be shown here -->
+        </div>
+
         <div class="input-container">
+            <input
+                type="file"
+                id="fileInput"
+                accept=".pdf,.txt,.md,.json,.csv"
+                style="display: none;"
+            />
+            <button class="file-upload-btn" id="fileUploadBtn">📎 Attach File</button>
             <input
                 type="text"
                 id="messageInput"
@@ -318,6 +413,7 @@
         let personas = [];
         let currentPersona = null;
         let conversationHistory = [];
+        let selectedFile = null;
         const API_BASE_URL = window.location.origin;
 
         // Load personas on startup
@@ -385,15 +481,70 @@
             }
         }
 
+        // File handling functions
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            selectedFile = file;
+            showFilePreview(file);
+        }
+
+        function showFilePreview(file) {
+            const filePreview = document.getElementById('filePreview');
+            const fileSize = formatFileSize(file.size);
+
+            filePreview.innerHTML = `
+                <div class="file-preview-item">
+                    <div class="file-icon">📄</div>
+                    <div class="file-info">
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${fileSize}</div>
+                    </div>
+                    <button class="remove-file" onclick="removeFile()">Remove</button>
+                </div>
+            `;
+            filePreview.classList.add('show');
+        }
+
+        function removeFile() {
+            selectedFile = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('filePreview').classList.remove('show');
+            document.getElementById('filePreview').innerHTML = '';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        async function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('category', 'user-uploads');
+
+            const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error('File upload failed');
+            }
+
+            const result = await response.json();
+            return result;
+        }
+
         async function sendMessage() {
             const input = document.getElementById('messageInput');
-            const message = input.value.trim();
+            let message = input.value.trim();
 
-            if (!message || !currentPersona) return;
-
-            // Add user message to chat
-            addMessage('user', message, 'You');
-            input.value = '';
+            if ((!message && !selectedFile) || !currentPersona) return;
 
             // Show loading state
             const loading = document.getElementById('loading');
@@ -402,6 +553,24 @@
             sendButton.disabled = true;
 
             try {
+                // Upload file if one is selected
+                let uploadedDoc = null;
+                if (selectedFile) {
+                    const uploadResult = await uploadFile(selectedFile);
+                    uploadedDoc = uploadResult.document;
+
+                    // Add file info to message
+                    const fileInfo = `[I've attached a file: ${selectedFile.name}]`;
+                    message = message ? `${message}\n\n${fileInfo}` : fileInfo;
+
+                    // Clear file selection
+                    removeFile();
+                }
+
+                // Add user message to chat
+                addMessage('user', message, 'You');
+                input.value = '';
+
                 const response = await fetch(`${API_BASE_URL}/agent`, {
                     method: 'POST',
                     headers: {
@@ -565,6 +734,12 @@
                 sendMessage();
             }
         });
+
+        // File upload event listeners
+        document.getElementById('fileUploadBtn').addEventListener('click', () => {
+            document.getElementById('fileInput').click();
+        });
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect);
 
         // Initialize
         loadPersonas();
