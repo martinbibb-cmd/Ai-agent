@@ -80,6 +80,7 @@ export class DocumentManager {
       // Try to initialize FTS - this might fail if already exists, which is OK
       try {
         await this.initializeFTS();
+        await this.initializeChunkFTS();
         console.log('FTS initialization completed successfully');
       } catch (ftsError) {
         console.warn('FTS initialization warning:', ftsError.message);
@@ -207,6 +208,83 @@ export class DocumentManager {
   }
 
   /**
+   * Initialize Full Text Search for document chunks
+   */
+  async initializeChunkFTS() {
+    try {
+      console.log('Initializing chunk FTS tables...');
+
+      // Check if chunk FTS table exists
+      const tableExists = await this.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks_fts'
+      `).first();
+
+      if (!tableExists) {
+        console.log('Creating chunk FTS table...');
+        await this.db.prepare(`
+          CREATE VIRTUAL TABLE document_chunks_fts USING fts5(
+            chunk_text,
+            content='document_chunks',
+            content_rowid='id'
+          )
+        `).run();
+        console.log('Chunk FTS table created');
+      }
+
+      // Ensure triggers exist
+      const triggers = await this.db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='trigger'
+          AND name IN (
+            'document_chunks_ai',
+            'document_chunks_ad',
+            'document_chunks_au'
+          )
+      `).all();
+
+      const existingTriggers = new Set((triggers.results || []).map((t) => t.name));
+
+      if (!existingTriggers.has('document_chunks_ai')) {
+        await this.db.prepare(`
+          CREATE TRIGGER document_chunks_ai AFTER INSERT ON document_chunks
+          BEGIN
+            INSERT INTO document_chunks_fts(rowid, chunk_text)
+            VALUES (new.id, new.chunk_text);
+          END
+        `).run();
+      }
+
+      if (!existingTriggers.has('document_chunks_ad')) {
+        await this.db.prepare(`
+          CREATE TRIGGER document_chunks_ad AFTER DELETE ON document_chunks
+          BEGIN
+            INSERT INTO document_chunks_fts(document_chunks_fts, rowid, chunk_text)
+            VALUES ('delete', old.id, old.chunk_text);
+          END
+        `).run();
+      }
+
+      if (!existingTriggers.has('document_chunks_au')) {
+        await this.db.prepare(`
+          CREATE TRIGGER document_chunks_au AFTER UPDATE ON document_chunks
+          BEGIN
+            INSERT INTO document_chunks_fts(document_chunks_fts, rowid, chunk_text)
+            VALUES ('delete', old.id, old.chunk_text);
+            INSERT INTO document_chunks_fts(rowid, chunk_text)
+            VALUES (new.id, new.chunk_text);
+          END
+        `).run();
+      }
+
+      console.log('Chunk FTS tables and triggers are ready');
+      return true;
+    } catch (error) {
+      console.error('Chunk FTS initialization error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Rebuild FTS index from existing data
    */
   async rebuildFTSIndex() {
@@ -215,9 +293,11 @@ export class DocumentManager {
 
       // Ensure FTS schema exists before attempting to rebuild
       await this.initializeFTS();
+      await this.initializeChunkFTS();
 
       // Clear existing FTS data
       await this.db.prepare(`DELETE FROM documents_fts`).run();
+      await this.db.prepare(`DELETE FROM document_chunks_fts`).run();
 
       // Rebuild from document_pages
       const pages = await this.db.prepare(`
@@ -240,8 +320,24 @@ export class DocumentManager {
         `).bind(page.rowid, page.document_id, page.filename, page.content).run();
       }
 
+      // Rebuild chunk FTS
+      const chunks = await this.db.prepare(`
+        SELECT id as rowid, chunk_text FROM document_chunks
+      `).all();
+
+      for (const chunk of (chunks.results || [])) {
+        await this.db.prepare(`
+          INSERT INTO document_chunks_fts(rowid, chunk_text)
+          VALUES (?, ?)
+        `).bind(chunk.rowid, chunk.chunk_text).run();
+      }
+
       console.log('FTS index rebuilt successfully');
-      return { success: true, pageCount: pages.results?.length || 0 };
+      return {
+        success: true,
+        pageCount: pages.results?.length || 0,
+        chunkCount: chunks.results?.length || 0
+      };
     } catch (error) {
       console.error('FTS rebuild error:', error);
       throw error;
@@ -276,6 +372,15 @@ export class DocumentManager {
         SELECT COUNT(*) as count FROM document_pages
       `).first();
 
+      // Count chunk FTS entries
+      const chunkFtsCount = await this.db.prepare(`
+        SELECT COUNT(*) as count FROM document_chunks_fts
+      `).first();
+
+      const chunkCount = await this.db.prepare(`
+        SELECT COUNT(*) as count FROM document_chunks
+      `).first();
+
       const healthy = ftsCount.count === pagesCount.count;
 
       return {
@@ -283,6 +388,8 @@ export class DocumentManager {
         healthy,
         ftsCount: ftsCount.count,
         pagesCount: pagesCount.count,
+        chunkFtsCount: chunkFtsCount.count,
+        chunkCount: chunkCount.count,
         message: healthy ? 'FTS index is healthy' : 'FTS index needs rebuild'
       };
     } catch (error) {
@@ -292,6 +399,37 @@ export class DocumentManager {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Save prepared text chunks to the database and ensure they are indexed
+   * @param {string} documentId
+   * @param {string[]} chunks
+   */
+  async saveDocumentChunks(documentId, chunks = []) {
+    await this.initialized;
+
+    if (!documentId) {
+      throw new Error('documentId is required to save chunks');
+    }
+
+    if (!Array.isArray(chunks) || chunks.length === 0) {
+      return { inserted: 0 };
+    }
+
+    await this.initializeChunkFTS();
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO document_chunks (document_id, page_number, chunk_text, chunk_index)
+      VALUES (?, NULL, ?, ?)
+    `);
+
+    let chunkIndex = 0;
+    for (const chunk of chunks) {
+      await insertStmt.bind(documentId, chunk, chunkIndex++).run();
+    }
+
+    return { inserted: chunks.length };
   }
 
   /**
