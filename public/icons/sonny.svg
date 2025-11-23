@@ -1,0 +1,17 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Sonny persona icon</title>
+  <desc id="desc">Curious persona icon with cool blues and a thoughtful halo.</desc>
+  <defs>
+    <linearGradient id="gradSonny" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bfdbfe" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="100" height="100" rx="20" fill="url(#gradSonny)" />
+  <circle cx="60" cy="54" r="16" fill="#eff6ff" />
+  <circle cx="55" cy="50" r="4" fill="#1e3a8a" />
+  <circle cx="65" cy="50" r="4" fill="#1e3a8a" />
+  <path d="M50 72 Q60 82 70 72" stroke="#1e3a8a" stroke-width="4" fill="none" stroke-linecap="round" />
+  <ellipse cx="60" cy="32" rx="22" ry="6" fill="none" stroke="#eff6ff" stroke-width="4" />
+  <text x="60" y="106" text-anchor="middle" fill="#eff6ff" font-size="14" font-family="Inter, sans-serif" font-weight="800">S</text>
+</svg>

@@ -26,6 +26,7 @@ All personas are stored in `data/personas.json` with the following structure:
 {
   "id": "persona_id",
   "label": "Display Name - Description",
+  "icon": "/icons/persona.svg",
   "default": true/false,
   "voiceHint": "voice_name",
   "systemPrompt": "Personality and communication style..."

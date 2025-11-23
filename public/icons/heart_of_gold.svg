@@ -1,0 +1,13 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Heart of Gold persona icon</title>
+  <desc id="desc">Cheerful persona icon featuring a bright yellow heart.</desc>
+  <defs>
+    <linearGradient id="gradHeart" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef3c7" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="100" height="100" rx="20" fill="url(#gradHeart)" />
+  <path d="M60 92 C30 72 28 45 42 38 C52 33 60 42 60 42 C60 42 68 33 78 38 C92 45 90 72 60 92 Z" fill="#fff7ed" stroke="#fef3c7" stroke-width="3" />
+  <text x="60" y="32" text-anchor="middle" fill="#92400e" font-size="14" font-family="Inter, sans-serif" font-weight="800">H</text>
+</svg>

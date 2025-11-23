@@ -100,6 +100,9 @@
             font-size: 14px;
             font-weight: 500;
             color: #333;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .persona-btn:hover {
@@ -112,6 +115,19 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border-color: transparent;
+        }
+
+        .persona-btn img {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            background: #f8fafc;
+        }
+
+        .persona-btn span {
+            text-align: left;
+            line-height: 1.4;
         }
 
         .chat-container {
@@ -263,10 +279,21 @@
             border-radius: 8px;
             font-size: 13px;
             color: #666;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .current-persona-info strong {
             color: #667eea;
+        }
+
+        .current-persona-info img {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            background: #f8fafc;
         }
     </style>
 </head>
@@ -332,8 +359,12 @@
                 personas.forEach(persona => {
                     const button = document.createElement('button');
                     button.className = `persona-btn ${persona.default ? 'active' : ''}`;
-                    button.textContent = persona.label;
-                    button.onclick = () => selectPersona(persona.id);
+                    button.dataset.personaId = persona.id;
+                    button.innerHTML = `
+                        <img src="${persona.icon || ''}" alt="${persona.label} icon" />
+                        <span>${persona.label}</span>
+                    `;
+                    button.onclick = (event) => selectPersona(persona.id, event);
                     personaButtons.appendChild(button);
 
                     if (persona.default) {
@@ -348,14 +379,19 @@
             }
         }
 
-        function selectPersona(personaId) {
+        function selectPersona(personaId, evt) {
             currentPersona = personas.find(p => p.id === personaId);
 
             // Update button states
             document.querySelectorAll('.persona-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (evt?.currentTarget) {
+                evt.currentTarget.classList.add('active');
+            } else {
+                const matchingBtn = document.querySelector(`[data-persona-id="${personaId}"]`);
+                if (matchingBtn) matchingBtn.classList.add('active');
+            }
 
             // Clear conversation history when switching personas
             conversationHistory = [];
@@ -379,8 +415,11 @@
         function updatePersonaInfo() {
             if (currentPersona) {
                 document.getElementById('personaInfo').innerHTML = `
-                    <strong>Current Persona:</strong> ${currentPersona.label} |
-                    <strong>Voice:</strong> ${currentPersona.voiceHint}
+                    ${currentPersona.icon ? `<img src="${currentPersona.icon}" alt="${currentPersona.label} icon" />` : ''}
+                    <div>
+                        <div><strong>Current Persona:</strong> ${currentPersona.label}</div>
+                        <div><strong>Voice:</strong> ${currentPersona.voiceHint}</div>
+                    </div>
                 `;
             }
         }
