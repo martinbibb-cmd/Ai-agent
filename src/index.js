@@ -129,7 +129,32 @@ export default {
         const formData = await request.formData();
         const file = formData.get('file');
         const category = formData.get('category') || 'general';
-        const tags = formData.get('tags') ? JSON.parse(formData.get('tags')) : [];
+
+        // Parse tags with error handling
+        let tags = [];
+        const tagsParam = formData.get('tags');
+        if (tagsParam) {
+          try {
+            tags = JSON.parse(tagsParam);
+            if (!Array.isArray(tags)) {
+              return new Response(JSON.stringify({
+                error: 'Invalid tags format',
+                details: 'Tags must be a JSON array'
+              }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+          } catch (parseError) {
+            return new Response(JSON.stringify({
+              error: 'Invalid tags JSON',
+              details: parseError.message
+            }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
 
         if (!file) {
           return new Response(JSON.stringify({
