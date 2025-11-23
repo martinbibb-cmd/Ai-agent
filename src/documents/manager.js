@@ -504,10 +504,33 @@ export class DocumentManager {
         DELETE FROM document_chunks WHERE document_id = ?
       `).bind(documentId).run();
 
-      // Store extracted page content with metadata
-      for (const page of parsedData.pages) {
-        if (!page.content || page.content.length === 0) continue;
+      // Validate that we have parseable content
+      const validPages = parsedData.pages.filter(page => page.content && page.content.length > 0);
 
+      if (validPages.length === 0) {
+        // No extractable content - mark as error
+        await this.db.prepare(`
+          UPDATE documents SET
+            status = 'error',
+            parsed_metadata = ?
+          WHERE id = ?
+        `).bind(
+          JSON.stringify({
+            error: {
+              code: 'NO_CONTENT',
+              message: 'No extractable text content found in document',
+              userMessage: 'This document appears to have no extractable text. It may be an image-only PDF or empty file.',
+              timestamp: new Date().toISOString()
+            }
+          }),
+          documentId
+        ).run();
+
+        throw new Error('No extractable text content found in document. The file may be image-only or empty.');
+      }
+
+      // Store extracted page content with metadata
+      for (const page of validPages) {
         await this.db.prepare(`
           INSERT INTO document_pages (document_id, page_number, content, page_metadata)
           VALUES (?, ?, ?, ?)
@@ -545,7 +568,7 @@ export class DocumentManager {
           character_count = ?
         WHERE id = ?
       `).bind(
-        parsedData.structure.pageCount,
+        validPages.length, // Use actual number of pages with content
         parsedData.format || 'unknown',
         parsedData.metadata.language || 'unknown',
         JSON.stringify(parsedData.metadata),
@@ -560,7 +583,7 @@ export class DocumentManager {
       return {
         id: documentId,
         filename: doc.filename,
-        pageCount: parsedData.structure.pageCount,
+        pageCount: validPages.length, // Return actual page count
         status: 'processed',
         format: parsedData.format,
         wordCount: parsedData.structure.wordCount,
@@ -762,13 +785,25 @@ export class DocumentManager {
     await this.initialized;
     const doc = await this.getDocument(documentId);
 
-    // Delete from R2
-    await this.r2.delete(doc.r2_key);
+    if (!doc) {
+      throw new Error('Document not found');
+    }
+
+    // Delete from R2 (with error handling to ensure DB cleanup happens)
+    try {
+      await this.r2.delete(doc.r2_key);
+    } catch (error) {
+      console.error(`Failed to delete R2 object for document ${documentId}:`, error);
+      // Continue to delete from database even if R2 deletion fails
+      // This prevents orphaned database records
+    }
 
     // Delete from database (cascades to pages and chunks)
     await this.db.prepare(`
       DELETE FROM documents WHERE id = ?
     `).bind(documentId).run();
+
+    console.log(`Document ${documentId} deleted successfully`);
   }
 
   /**
