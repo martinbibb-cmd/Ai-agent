@@ -481,8 +481,7 @@ export default {
         console.error('Upload error:', error);
         return new Response(JSON.stringify({
           ok: false,
-          error: 'Upload failed',
-          details: error.message
+          error: error.message || 'Upload failed'
         }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
