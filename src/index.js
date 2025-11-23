@@ -4,6 +4,7 @@ import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
 import { extractTextFromFile, splitIntoChunks } from './documents/textProcessing.js';
+import { ingestDocumentText } from './documents/textIngestion.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -174,48 +175,7 @@ export default {
 
       try {
         const body = await request.json();
-        const text = (body?.text || '').toString();
-
-        if (!text.trim()) {
-          return new Response(JSON.stringify({
-            ok: false,
-            error: "'text' is required and cannot be empty"
-          }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
-        let filename = (body?.filename || '').toString().trim();
-        if (!filename) {
-          filename = `text-upload-${Date.now()}.txt`;
-        }
-
-        const category = (body?.category || 'general').toString();
-
-        let tags = [];
-        if (body?.tags !== undefined) {
-          if (!Array.isArray(body.tags)) {
-            return new Response(JSON.stringify({
-              ok: false,
-              error: 'tags must be an array of strings'
-            }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-          tags = body.tags.map(tag => tag?.toString()).filter(Boolean);
-        }
-
-        const result = await documentManager.ingestTextDocument({
-          filename,
-          originalFilename: body?.originalFilename || filename,
-          contentType: 'text/plain',
-          uploadedBy: 'user',
-          category,
-          tags,
-          text
-        });
+        const result = await ingestDocumentText(documentManager, body);
 
         return new Response(JSON.stringify({
           ok: true,
@@ -234,7 +194,7 @@ export default {
           ok: false,
           error: error.message
         }), {
-          status: 500,
+          status: error.statusCode || 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
