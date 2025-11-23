@@ -1,4 +1,5 @@
 import { DocumentParser } from './parsers/index.js';
+import { validateFileSignature, detectFileType, getFileTypeName } from './fileSignature.js';
 
 /**
  * Document Manager - handles document upload, storage, and retrieval
@@ -76,8 +77,20 @@ export class DocumentManager {
       // Try to initialize FTS - this might fail if already exists, which is OK
       try {
         await this.initializeFTS();
+        console.log('FTS initialization completed successfully');
       } catch (ftsError) {
-        console.log('FTS initialization skipped (may already exist):', ftsError.message);
+        console.warn('FTS initialization warning:', ftsError.message);
+
+        // Check if FTS exists but init failed for other reasons
+        const ftsHealth = await this.checkFTSHealth().catch(() => ({ exists: false }));
+
+        if (!ftsHealth.exists) {
+          console.error('FTS table does not exist and initialization failed!');
+          console.error('Search functionality will not work until FTS is initialized.');
+          // Don't throw - allow app to start but search won't work
+        } else {
+          console.log('FTS table exists, initialization skipped');
+        }
       }
 
       return true;
@@ -251,7 +264,7 @@ export class DocumentManager {
         throw new Error('Filename is required');
       }
 
-      // Store file in R2
+      // Get file buffer
       const fileBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
 
       if (fileBuffer.byteLength === 0) {
@@ -260,6 +273,33 @@ export class DocumentManager {
 
       if (fileBuffer.byteLength > 50 * 1024 * 1024) { // 50MB limit
         throw new Error('File size exceeds 50MB limit');
+      }
+
+      // Validate file signature
+      console.log('[DocumentManager] Validating file signature...');
+      const signatureValidation = validateFileSignature(fileBuffer, metadata.contentType);
+      console.log('[DocumentManager] Signature validation result:', signatureValidation);
+
+      if (!signatureValidation.isValid && signatureValidation.validatable) {
+        const error = new Error(signatureValidation.message);
+        error.code = 'INVALID_FILE_SIGNATURE';
+        error.detectedType = signatureValidation.detectedType;
+        error.declaredType = metadata.contentType;
+        throw error;
+      }
+
+      // Detect actual file type
+      const detectedType = detectFileType(fileBuffer);
+      console.log('[DocumentManager] Detected file type:', detectedType || 'text/unknown');
+
+      // Warn about unsupported types
+      if (detectedType && !['pdf', null].includes(detectedType)) {
+        const error = new Error(
+          `Unsupported file type: ${getFileTypeName(detectedType)}. Only PDF and text files are supported.`
+        );
+        error.code = 'UNSUPPORTED_FILE_TYPE';
+        error.detectedType = detectedType;
+        throw error;
       }
 
       console.log(`Uploading document ${documentId} to R2 bucket (${fileBuffer.byteLength} bytes)`);
@@ -370,20 +410,52 @@ export class DocumentManager {
       // Parse document with enhanced parser
       let parsedData;
       try {
-        console.log(`Starting PDF parsing for ${doc.filename}`);
+        console.log(`Starting document parsing for ${doc.filename}`);
         parsedData = await this.parser.parse(fileBuffer, {
           name: doc.filename,
           type: doc.content_type,
           size: doc.file_size
         });
-        console.log(`PDF parsing completed: ${parsedData.pages.length} pages extracted`);
+        console.log(`Document parsing completed: ${parsedData.pages.length} pages extracted`);
       } catch (error) {
         console.error('Document parsing failed:', error);
-        // Mark as error
+
+        // Mark document as error with specific error details
         await this.db.prepare(`
-          UPDATE documents SET status = 'error' WHERE id = ?
-        `).bind(documentId).run();
-        throw new Error(`PDF parsing failed: ${error.message}. This could be due to: corrupted PDF, encrypted PDF, or unsupported PDF format.`);
+          UPDATE documents SET
+            status = 'error',
+            parsed_metadata = ?
+          WHERE id = ?
+        `).bind(
+          JSON.stringify({
+            error: {
+              code: error.code || 'PARSE_ERROR',
+              message: error.message,
+              userMessage: error.userMessage || error.message,
+              timestamp: new Date().toISOString()
+            }
+          }),
+          documentId
+        ).run();
+
+        // Throw with appropriate user-friendly message
+        const userMessage = error.userMessage || error.message;
+
+        if (error.code === 'SIGNATURE_MISMATCH') {
+          throw new Error(`File type validation failed: ${userMessage}`);
+        } else if (error.code === 'UNSUPPORTED_FILE_TYPE') {
+          throw new Error(`Unsupported file type: ${userMessage}`);
+        } else if (error.code === 'INVALID_PDF') {
+          throw new Error(`Invalid PDF file: ${userMessage}`);
+        } else if (error.code === 'PDF_ENCRYPTED') {
+          throw new Error('This PDF is password-protected and cannot be processed.');
+        } else if (error.code === 'PDF_CORRUPTED') {
+          throw new Error('This PDF appears to be corrupted or invalid.');
+        } else if (error.code === 'PDF_TOO_LARGE') {
+          throw new Error('This PDF is too large or complex to process.');
+        } else {
+          throw new Error(`Document parsing failed: ${userMessage}`);
+        }
       }
 
       // Delete existing placeholder page content
@@ -472,24 +544,49 @@ export class DocumentManager {
    */
   async searchDocuments(query, limit = 10) {
     await this.initialized;
-    const results = await this.db.prepare(`
-      SELECT
-        d.id,
-        d.filename,
-        d.category,
-        d.uploaded_at,
-        dp.page_number,
-        dp.content,
-        snippet(documents_fts, 2, '<mark>', '</mark>', '...', 64) as snippet
-      FROM documents_fts
-      JOIN document_pages dp ON documents_fts.rowid = dp.id
-      JOIN documents d ON dp.document_id = d.id
-      WHERE documents_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    `).bind(query, limit).all();
 
-    return results.results || [];
+    try {
+      // Check FTS health before searching
+      const ftsHealth = await this.checkFTSHealth();
+
+      if (!ftsHealth.exists) {
+        console.error('[DocumentManager] FTS table does not exist');
+        throw new Error('Search index is not initialized. Please contact support.');
+      }
+
+      if (!ftsHealth.healthy) {
+        console.warn('[DocumentManager] FTS index is out of sync:', ftsHealth);
+        // Don't throw - allow search to proceed but log warning
+      }
+
+      const results = await this.db.prepare(`
+        SELECT
+          d.id,
+          d.filename,
+          d.category,
+          d.uploaded_at,
+          dp.page_number,
+          dp.content,
+          snippet(documents_fts, 2, '<mark>', '</mark>', '...', 64) as snippet
+        FROM documents_fts
+        JOIN document_pages dp ON documents_fts.rowid = dp.id
+        JOIN documents d ON dp.document_id = d.id
+        WHERE documents_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `).bind(query, limit).all();
+
+      return results.results || [];
+    } catch (error) {
+      console.error('[DocumentManager] Search error:', error);
+
+      // If FTS query failed, try to provide helpful error
+      if (error.message?.includes('no such table')) {
+        throw new Error('Search index is not initialized. Please contact support.');
+      }
+
+      throw new Error(`Search failed: ${error.message}`);
+    }
   }
 
   /**
