@@ -1,4 +1,5 @@
 import { boilerDatabase } from '../knowledge/boilers.js';
+import { searchChunksSimple, searchChunksVector } from '../documents/search.js';
 
 // Survey storage (in production, this would be a database)
 const surveys = new Map();
@@ -265,6 +266,47 @@ export const toolHandlers = {
         query
       };
     }
+  },
+
+  async doc_search(input, documentManager, env) {
+    const query = (input?.query || '').toString().trim();
+    const maxRequested = typeof input?.max_results === 'number' ? input.max_results : 8;
+    const limit = Math.max(1, Math.min(maxRequested, 20));
+
+    if (!query) {
+      return { error: 'Missing query for doc_search.' };
+    }
+
+    if (!env || !env.DB) {
+      return { error: 'Document database is not configured.' };
+    }
+
+    let chunks = [];
+    try {
+      if (env.DOC_INDEX) {
+        chunks = await searchChunksVector(env, query, limit);
+      }
+      if (!chunks || chunks.length === 0) {
+        chunks = await searchChunksSimple(env, query, limit);
+      }
+    } catch (err) {
+      return {
+        error: 'Document search failed.',
+        details: err.message
+      };
+    }
+
+    return {
+      query,
+      results: (chunks || []).map(c => ({
+        text: c.text,
+        documentId: c.documentId,
+        filename: c.filename,
+        category: c.category,
+        pageNumber: c.pageNumber,
+        chunkIndex: c.chunkIndex
+      }))
+    };
   },
 
   list_documents: async (input, documentManager) => {

@@ -237,6 +237,26 @@ export const tools = [
     }
   },
   {
+    name: "doc_search",
+    description: "Searches uploaded manuals, pricebooks and guides for relevant excerpts based on a natural language query.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "User query or question, e.g. \"maximum flue length for Worcester 8000 30kW\""
+        },
+        max_results: {
+          type: "integer",
+          description: "Maximum number of excerpts to return (default 8, max 20).",
+          minimum: 1,
+          maximum: 20
+        }
+      },
+      required: ["query"]
+    }
+  },
+  {
     name: "list_documents",
     description: "List all uploaded documents with optional filtering. Use this to show users what documents are available.",
     input_schema: {
