@@ -206,7 +206,6 @@ export default {
 
       try {
         const formData = await request.formData();
-        const file = formData.get('file');
         const category = formData.get('category') || 'general';
 
         // Parse tags with error handling
@@ -237,7 +236,13 @@ export default {
           }
         }
 
-        if (!file) {
+        const files = formData.getAll('files').filter(Boolean);
+        const singleFile = formData.get('file');
+        if (singleFile) {
+          files.push(singleFile);
+        }
+
+        if (files.length === 0) {
           return new Response(JSON.stringify({
             ok: false,
             error: 'No file provided'
@@ -247,39 +252,63 @@ export default {
           });
         }
 
-        const contentType = file.type || 'application/octet-stream';
+        const results = [];
 
-        const filename = file.name || `upload-${Date.now()}`;
-        const textContent = contentType === 'application/pdf'
-          ? await extractTextFromPdfWithOpenAI(env, file, filename)
-          : await file.text();
+        for (const file of files) {
+          try {
+            const contentType = file.type || 'application/octet-stream';
+            const filename = file.name || `upload-${Date.now()}`;
+            const textContent = contentType === 'application/pdf'
+              ? await extractTextFromPdfWithOpenAI(env, file, filename)
+              : await file.text();
 
-        const parsedResult = await ingestRawTextAsDocument(
-          env,
-          {
-            filename,
-            originalFilename: filename,
-            contentType,
-            category,
-            tags,
-            uploadedBy: 'user',
-            text: textContent
-          },
-          documentManager
-        );
+            const parsedResult = await ingestRawTextAsDocument(
+              env,
+              {
+                filename,
+                originalFilename: filename,
+                contentType,
+                category,
+                tags,
+                uploadedBy: 'user',
+                text: textContent
+              },
+              documentManager
+            );
 
-        try {
-          await upsertVectorsForDocument(env, parsedResult.id, parsedResult.filename, parsedResult.category ?? null);
-        } catch (vectorError) {
-          console.error('Vector upsert error (ignored):', vectorError);
+            try {
+              await upsertVectorsForDocument(env, parsedResult.id, parsedResult.filename, parsedResult.category ?? null);
+            } catch (vectorError) {
+              console.error('Vector upsert error (ignored):', vectorError);
+            }
+
+            results.push({
+              ok: true,
+              document: parsedResult,
+              documentId: parsedResult.id,
+              filename: parsedResult.filename,
+              chunksInserted: parsedResult.chunksInserted
+            });
+          } catch (fileError) {
+            console.error('Upload error for file:', file?.name || 'unknown', fileError);
+            results.push({
+              ok: false,
+              error: fileError?.message || 'Upload failed',
+              filename: file?.name || 'unknown'
+            });
+          }
         }
 
+        const allOk = results.every(r => r.ok);
+        const status = allOk ? 200 : 207; // 207 = multi-status when some files fail
+
         return new Response(JSON.stringify({
-          ok: true,
-          document: parsedResult,
-          documentId: parsedResult.id,
-          chunksInserted: parsedResult.chunksInserted
+          ok: allOk,
+          results,
+          uploadedCount: results.filter(r => r.ok).length,
+          failedCount: results.filter(r => !r.ok).length
         }), {
+          status,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
 
