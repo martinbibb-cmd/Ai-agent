@@ -70,39 +70,33 @@ You have access to specialized tools - use them when appropriate to provide the 
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 
-function buildFtsMatchQuery(rawQuery, limit) {
-  const escaped = rawQuery.replace(/'/g, "''");
+async function searchChunks(env, query, limit = 8) {
+  const db = env.DB;
+  const lowered = query.toLowerCase();
 
   const sql = `
     SELECT
-      dc.chunk_text AS text,
+      dc.chunk_text,
       dc.document_id,
       dc.page_number,
       dc.chunk_index,
-      d.filename AS document_name,
+      d.filename,
       d.category
-    FROM document_chunks_fts f
-    JOIN document_chunks dc ON dc.id = f.rowid
+    FROM document_chunks dc
     JOIN documents d ON d.id = dc.document_id
-    WHERE document_chunks_fts MATCH '${escaped}'
-    LIMIT ?1;
+    WHERE LOWER(dc.chunk_text) LIKE '%' || ?1 || '%'
+    LIMIT ?2;
   `;
 
-  return { sql, bind: [limit] };
-}
-
-async function searchChunks(env, query, limit = 8) {
-  const db = env.DB;
-  const { sql, bind } = buildFtsMatchQuery(query, limit);
-  const { results } = await db.prepare(sql).bind(...bind).all();
+  const { results } = await db.prepare(sql).bind(lowered, limit).all();
 
   return (results || []).map((row) => ({
-    text: row.text,
-    document_id: row.document_id,
-    document_name: row.document_name,
-    page_number: row.page_number,
-    chunk_index: row.chunk_index,
-    category: row.category,
+    text: row.chunk_text,
+    documentId: row.document_id,
+    pageNumber: row.page_number,
+    chunkIndex: row.chunk_index,
+    filename: row.filename ?? null,
+    category: row.category ?? null,
   }));
 }
 
@@ -538,8 +532,15 @@ export default {
         const chunks = await searchChunks(env, question, 8);
 
         let context = '';
-        for (const c of chunks) {
-          context += `[Document: ${c.document_name} | ID: ${c.document_id} | Chunk ${c.chunk_index ?? 0}]\n${c.text}\n\n`;
+        if (chunks.length === 0) {
+          context = '[no relevant excerpts found]';
+        } else {
+          for (const c of chunks) {
+            const docLabel = c.filename || c.documentId;
+            const pageLabel = c.pageNumber ?? '?';
+            context += `[Document: ${docLabel}, page ${pageLabel}]\n`;
+            context += `${c.text}\n\n`;
+          }
         }
 
         const messages = [
