@@ -476,10 +476,10 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        // Text-to-Speech functionality
-        let currentSpeech = null;
+        // Text-to-Speech functionality using OpenAI TTS API
+        let currentAudio = null;
 
-        function speakMessage(messageId, personaLabel) {
+        async function speakMessage(messageId, personaLabel) {
             // Find the message element
             const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
             const button = document.querySelector(`[data-message-id="${messageId}"]`);
@@ -489,9 +489,9 @@
             const content = messageEl.dataset.messageContent;
 
             // If currently speaking, stop
-            if (currentSpeech) {
-                window.speechSynthesis.cancel();
-                currentSpeech = null;
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
                 document.querySelectorAll('.speak-btn').forEach(btn => {
                     btn.classList.remove('speaking');
                     btn.textContent = 'Read Aloud';
@@ -499,58 +499,63 @@
                 return;
             }
 
-            // Create speech synthesis
-            const utterance = new SpeechSynthesisUtterance(content);
-
-            // Set voice based on persona
-            const voiceMap = {
-                'Janet': { pitch: 1.0, rate: 1.0 },
-                'Rocky': { pitch: 1.2, rate: 1.1 },
-                'Heart': { pitch: 1.3, rate: 0.95 },
-                'Marvin': { pitch: 0.7, rate: 0.9 },
-                'Sonny': { pitch: 0.9, rate: 1.0 }
-            };
-
-            const personaName = personaLabel.split(' - ')[0];
-            const voiceSettings = voiceMap[personaName] || { pitch: 1.0, rate: 1.0 };
-
-            utterance.pitch = voiceSettings.pitch;
-            utterance.rate = voiceSettings.rate;
-            utterance.volume = 1.0;
-
-            // Try to use a good voice
-            const voices = window.speechSynthesis.getVoices();
-            const preferredVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Natural'));
-            if (preferredVoice) {
-                utterance.voice = preferredVoice;
-            }
-
-            utterance.onstart = () => {
+            try {
+                // Update button state
                 button.classList.add('speaking');
-                button.textContent = 'Stop';
-            };
+                button.textContent = 'Loading...';
 
-            utterance.onend = () => {
+                // Call the TTS API
+                const response = await fetch(`${API_BASE_URL}/api/tts`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: content,
+                        personaId: currentPersona.id
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate speech');
+                }
+
+                // Get the audio data
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+
+                // Create and play audio
+                const audio = new Audio(audioUrl);
+                currentAudio = audio;
+
+                audio.onplay = () => {
+                    button.textContent = 'Stop';
+                };
+
+                audio.onended = () => {
+                    button.classList.remove('speaking');
+                    button.textContent = 'Read Aloud';
+                    currentAudio = null;
+                    URL.revokeObjectURL(audioUrl);
+                };
+
+                audio.onerror = () => {
+                    button.classList.remove('speaking');
+                    button.textContent = 'Read Aloud';
+                    currentAudio = null;
+                    URL.revokeObjectURL(audioUrl);
+                    alert('Failed to play audio');
+                };
+
+                await audio.play();
+
+            } catch (error) {
+                console.error('TTS error:', error);
                 button.classList.remove('speaking');
                 button.textContent = 'Read Aloud';
-                currentSpeech = null;
-            };
-
-            utterance.onerror = () => {
-                button.classList.remove('speaking');
-                button.textContent = 'Read Aloud';
-                currentSpeech = null;
-            };
-
-            currentSpeech = utterance;
-            window.speechSynthesis.speak(utterance);
-        }
-
-        // Load voices when available
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.onvoiceschanged = () => {
-                window.speechSynthesis.getVoices();
-            };
+                currentAudio = null;
+                alert('Failed to generate speech: ' + error.message);
+            }
         }
 
         // Event listeners

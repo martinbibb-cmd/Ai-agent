@@ -253,5 +253,46 @@ export const tools = [
       },
       required: []
     }
+  },
+  {
+    name: "upload_document",
+    description: "Upload and process a document (PDF, text file, etc.) to make it searchable. Use this when users want to add documents to the knowledge base. NOTE: This tool expects a file URL or base64 content.",
+    input_schema: {
+      type: "object",
+      properties: {
+        file_url: {
+          type: "string",
+          description: "URL to download the file from (http/https)"
+        },
+        filename: {
+          type: "string",
+          description: "Name for the file (with extension, e.g., 'manual.pdf')"
+        },
+        category: {
+          type: "string",
+          description: "Category for the document (e.g., 'manuals', 'specs', 'guides', 'general')"
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tags for the document"
+        }
+      },
+      required: ["file_url", "filename"]
+    }
+  },
+  {
+    name: "delete_document",
+    description: "Delete a document from the knowledge base. Use this when users want to remove a document.",
+    input_schema: {
+      type: "object",
+      properties: {
+        document_id: {
+          type: "string",
+          description: "The ID of the document to delete"
+        }
+      },
+      required: ["document_id"]
+    }
   }
 ];
