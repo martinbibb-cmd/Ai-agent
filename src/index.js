@@ -3,7 +3,7 @@ import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
-import { ingestDocumentText } from './documents/textIngestion.js';
+import { ingestDocumentText, ingestRawTextAsDocument } from './documents/textIngestion.js';
 import { extractTextFromPdfWithOpenAI } from './documents/pdfExtraction.js';
 
 // Voice mapping for TTS
@@ -443,50 +443,24 @@ export default {
 
         const contentType = file.type || 'application/octet-stream';
 
-        const uploadResult = await documentManager.uploadDocument(file, {
-          filename: file.name,
-          contentType,
-          category,
-          tags,
-          uploadedBy: 'user'
-        });
+        const filename = file.name || `upload-${Date.now()}`;
+        const textContent = contentType === 'application/pdf'
+          ? await extractTextFromPdfWithOpenAI(env, file, filename)
+          : await file.text();
 
-        let parsedResult;
-
-        if (contentType === 'application/pdf') {
-          let extractedText;
-          try {
-            extractedText = await extractTextFromPdfWithOpenAI(env, file, file.name);
-          } catch (error) {
-            try {
-              await env.DB.prepare(
-                'UPDATE documents SET status = "error", parsed_metadata = ? WHERE id = ?'
-              ).bind(
-                JSON.stringify({
-                  error: {
-                    message: error.message,
-                    timestamp: new Date().toISOString()
-                  }
-                }),
-                uploadResult.id
-              ).run();
-            } catch (dbError) {
-              console.error('Failed to record PDF extraction error:', dbError);
-            }
-            throw error;
-          }
-
-          parsedResult = await documentManager.ingestExtractedText(uploadResult.id, extractedText, {
-            parserVersion: 'openai-pdf-extract-v1',
-            extractedBy: 'openai-file-extract'
-          });
-        } else {
-          const textContent = await file.text();
-          parsedResult = await documentManager.ingestExtractedText(uploadResult.id, textContent, {
-            parserVersion: 'text-upload-v1',
-            extractedBy: 'text-upload'
-          });
-        }
+        const parsedResult = await ingestRawTextAsDocument(
+          env,
+          {
+            filename,
+            originalFilename: filename,
+            contentType,
+            category,
+            tags,
+            uploadedBy: 'user',
+            text: textContent
+          },
+          documentManager
+        );
 
         try {
           await upsertVectorsForDocument(env, parsedResult.id, parsedResult.filename, parsedResult.category ?? null);
