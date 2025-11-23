@@ -22,7 +22,7 @@ bucket_name = "agentstorage"
 [[d1_databases]]
 binding = "DB"
 database_name = "agent-db"
-database_id = "88b7a790-49ff-4d32-bebc-0af0194fed57"
+database_id = "87400a56-0eff-4ac0-9bed-3f08ef2e0e79"
 
 # Asset bindings for serving static files
 [assets]
