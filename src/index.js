@@ -390,6 +390,7 @@ export default {
     if (url.pathname === '/api/documents/upload' && request.method === 'POST') {
       if (!documentManager) {
         return new Response(JSON.stringify({
+          ok: false,
           error: 'Document storage not configured'
         }), {
           status: 503,
@@ -410,6 +411,7 @@ export default {
             tags = JSON.parse(tagsParam);
             if (!Array.isArray(tags)) {
               return new Response(JSON.stringify({
+                ok: false,
                 error: 'Invalid tags format',
                 details: 'Tags must be a JSON array'
               }), {
@@ -419,6 +421,7 @@ export default {
             }
           } catch (parseError) {
             return new Response(JSON.stringify({
+              ok: false,
               error: 'Invalid tags JSON',
               details: parseError.message
             }), {
@@ -430,6 +433,7 @@ export default {
 
         if (!file) {
           return new Response(JSON.stringify({
+            ok: false,
             error: 'No file provided'
           }), {
             status: 400,
@@ -491,7 +495,7 @@ export default {
         }
 
         return new Response(JSON.stringify({
-          success: true,
+          ok: true,
           document: parsedResult,
           documentId: parsedResult.id,
           chunksInserted: parsedResult.chunksInserted
@@ -502,6 +506,7 @@ export default {
       } catch (error) {
         console.error('Upload error:', error);
         return new Response(JSON.stringify({
+          ok: false,
           error: 'Upload failed',
           details: error.message
         }), {

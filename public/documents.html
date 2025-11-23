@@ -189,6 +189,44 @@
             display: block;
         }
 
+        .upload-info {
+            margin-top: 8px;
+            font-size: 14px;
+            color: #444;
+        }
+
+        .upload-progress {
+            margin-top: 12px;
+            background: #eee;
+            border-radius: 6px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .upload-progress-bar {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(135deg, #4caf50 0%, #43a047 100%);
+            transition: width 0.1s linear;
+        }
+
+        .upload-status {
+            margin-top: 12px;
+            font-size: 14px;
+        }
+
+        .upload-status.ok {
+            color: #2e7d32;
+        }
+
+        .upload-status.error {
+            color: #c62828;
+        }
+
+        .hidden {
+            display: none;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -240,6 +278,14 @@
                 <input type="text" id="tagsInput" placeholder="Tags (comma separated)">
                 <button id="uploadButton" disabled>Upload Document</button>
             </div>
+
+            <div id="uploadInfo" class="upload-info"></div>
+
+            <div id="uploadProgressContainer" class="upload-progress hidden">
+                <div class="upload-progress-bar" id="uploadProgressBar"></div>
+            </div>
+
+            <div id="uploadStatus" class="upload-status"></div>
         </div>
 
         <div class="status-message" id="statusMessage"></div>
@@ -268,6 +314,49 @@
     <script>
         const API_BASE_URL = `${window.location.origin}/api`;
         let selectedFile = null;
+        const uploadInfoEl = document.getElementById('uploadInfo');
+        const uploadStatusEl = document.getElementById('uploadStatus');
+        const uploadProgressContainer = document.getElementById('uploadProgressContainer');
+        const uploadProgressBar = document.getElementById('uploadProgressBar');
+
+        function setUploadInfo(file, phase = 'selected') {
+            if (!uploadInfoEl) return;
+
+            if (!file) {
+                uploadInfoEl.textContent = '';
+                return;
+            }
+
+            const sizeKb = Math.max(1, Math.round(file.size / 1024));
+            const prefix = phase === 'uploading'
+                ? 'Uploading'
+                : phase === 'done'
+                    ? 'Finished'
+                    : 'Selected';
+
+            uploadInfoEl.textContent = `${prefix}: ${file.name} (${sizeKb} KB)`;
+        }
+
+        function setUploadStatus(message, type) {
+            if (!uploadStatusEl) return;
+
+            uploadStatusEl.textContent = message || '';
+            uploadStatusEl.classList.remove('ok', 'error');
+
+            if (type) {
+                uploadStatusEl.classList.add(type);
+            }
+        }
+
+        function resetUploadProgress() {
+            if (uploadProgressContainer) {
+                uploadProgressContainer.classList.add('hidden');
+            }
+
+            if (uploadProgressBar) {
+                uploadProgressBar.style.width = '0%';
+            }
+        }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -321,53 +410,127 @@
             }
 
             selectedFile = file;
+            setUploadStatus('', null);
+            resetUploadProgress();
+            setUploadInfo(file, 'selected');
             document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${file.name}`;
             document.getElementById('uploadButton').disabled = false;
         }
 
-        async function uploadDocument() {
-            if (!selectedFile) return;
+        function uploadDocument() {
+            if (!selectedFile) {
+                setUploadStatus('Please select a PDF to upload.', 'error');
+                return;
+            }
 
             const uploadButton = document.getElementById('uploadButton');
+            const uploadArea = document.getElementById('uploadArea');
+            const fileForStatus = selectedFile;
+
             uploadButton.disabled = true;
             uploadButton.textContent = 'Uploading...';
 
-            try {
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                formData.append('category', document.getElementById('categorySelect').value);
+            setUploadStatus('', null);
+            resetUploadProgress();
+            setUploadInfo(fileForStatus, 'uploading');
 
-                const tags = document.getElementById('tagsInput').value
-                    .split(',')
-                    .map(t => t.trim())
-                    .filter(t => t);
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('category', document.getElementById('categorySelect').value);
 
-                if (tags.length > 0) {
-                    formData.append('tags', JSON.stringify(tags));
+            const tags = document.getElementById('tagsInput').value
+                .split(',')
+                .map(t => t.trim())
+                .filter(t => t);
+
+            if (tags.length > 0) {
+                formData.append('tags', JSON.stringify(tags));
+            }
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${API_BASE_URL}/documents/upload`, true);
+
+            xhr.upload.onprogress = function(event) {
+                if (event.lengthComputable && uploadProgressContainer && uploadProgressBar) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    uploadProgressContainer.classList.remove('hidden');
+                    uploadProgressBar.style.width = `${percent}%`;
                 }
+            };
 
-                const result = await fetchJson(`${API_BASE_URL}/documents/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState !== XMLHttpRequest.DONE) return;
 
-                if (result.success) {
-                    showStatus(`Document "${result.document.filename}" uploaded successfully!`, 'success');
-                    selectedFile = null;
-                    document.getElementById('uploadArea').querySelector('p').textContent = '📁 Drop PDF file here or click to browse';
-                    document.getElementById('tagsInput').value = '';
-                    document.getElementById('fileInput').value = '';
-                    loadDocuments();
-                } else {
-                    showStatus(`Upload failed: ${result.error}`, 'error');
-                }
-
-            } catch (error) {
-                showStatus(`Upload error: ${error.message}`, 'error');
-            } finally {
                 uploadButton.disabled = false;
                 uploadButton.textContent = 'Upload Document';
-            }
+
+                let data = null;
+
+                try {
+                    const contentType = xhr.getResponseHeader('Content-Type') || '';
+                    if (contentType.includes('application/json')) {
+                        data = JSON.parse(xhr.responseText || '{}');
+                    }
+                } catch (err) {
+                    console.error('Error parsing upload response', err);
+                    setUploadStatus('Upload completed, but response could not be parsed.', 'error');
+                    showStatus('Upload completed, but response could not be parsed.', 'error');
+                    return;
+                }
+
+                if (!xhr.status || xhr.status >= 400) {
+                    const message = (data && (data.error || data.details)) || `Upload failed with status ${xhr.status}`;
+                    setUploadStatus(message, 'error');
+                    showStatus(`Upload failed: ${message}`, 'error');
+                    return;
+                }
+
+                if (uploadProgressContainer && !uploadProgressContainer.classList.contains('hidden')) {
+                    uploadProgressBar.style.width = '100%';
+                }
+
+                if (data && data.ok === false) {
+                    const message = data.error || 'Upload failed.';
+                    setUploadStatus(message, 'error');
+                    showStatus(`Upload failed: ${message}`, 'error');
+                    return;
+                }
+
+                if (data && data.ok) {
+                    const chunks = data.chunksInserted != null ? ` (${data.chunksInserted} chunks)` : '';
+                    const docId = data.documentId || (data.document && data.document.id) || 'document';
+                    setUploadStatus(`Upload succeeded: ${docId}${chunks}`, 'ok');
+                    showStatus(`Document "${fileForStatus.name}" uploaded successfully!`, 'success');
+
+                    selectedFile = null;
+                    setUploadInfo(fileForStatus, 'done');
+                    resetUploadProgress();
+                    document.getElementById('uploadButton').disabled = true;
+                    document.getElementById('tagsInput').value = '';
+                    document.getElementById('fileInput').value = '';
+
+                    if (uploadArea) {
+                        const textEls = uploadArea.querySelectorAll('p');
+                        if (textEls.length > 0) {
+                            textEls[0].textContent = '📁 Drop PDF file here or click to browse';
+                        }
+                    }
+
+                    loadDocuments();
+                } else {
+                    setUploadStatus('Upload completed, but server did not return a standard response.', 'ok');
+                    showStatus('Upload completed.', 'success');
+                }
+            };
+
+            xhr.onerror = function() {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload Document';
+                setUploadStatus('Network error while uploading file.', 'error');
+                showStatus('Network error while uploading file.', 'error');
+            };
+
+            xhr.send(formData);
         }
 
         async function loadDocuments() {
