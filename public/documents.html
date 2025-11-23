@@ -253,10 +253,10 @@
                     <option value="manuals">Manuals</option>
                     <option value="specs">Specifications</option>
                     <option value="guides">Guides</option>
-                    <option value="regulations">Regulations</option>
                     <option value="general">General</option>
                 </select>
                 <button onclick="loadDocuments()" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">Refresh</button>
+                <button onclick="initializeFTS()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🔧 Fix Search Index</button>
             </div>
 
             <div id="documentsList">
@@ -491,6 +491,34 @@
             setTimeout(() => {
                 statusEl.classList.remove('show');
             }, 5000);
+        }
+
+        // Initialize FTS (Fix search index)
+        async function initializeFTS() {
+            if (!confirm('This will rebuild the search index for all documents. Continue?')) {
+                return;
+            }
+
+            showStatus('Initializing search index...', 'info');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/documents/fts/init`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('✓ ' + result.message, 'success');
+                    setTimeout(() => {
+                        loadDocuments();
+                    }, 1000);
+                } else {
+                    showStatus('❌ Failed: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Error: ' + error.message, 'error');
+            }
         }
 
         // Filter documents when category changes
