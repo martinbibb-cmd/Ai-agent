@@ -101,7 +101,7 @@ async function embedText(env, input) {
   return embedding;
 }
 
-async function searchChunksLike(env, query, limit = 8) {
+async function searchChunksSubstring(env, query, limit = 8) {
   const db = env.DB;
   const lowered = query.toLowerCase();
 
@@ -115,7 +115,7 @@ async function searchChunksLike(env, query, limit = 8) {
       d.category
     FROM document_chunks dc
     JOIN documents d ON d.id = dc.document_id
-    WHERE LOWER(dc.chunk_text) LIKE '%' || ?1 || '%'
+    WHERE INSTR(LOWER(dc.chunk_text), ?1) > 0
     LIMIT ?2;
   `;
 
@@ -668,11 +668,11 @@ export default {
           }
 
           if (!chunks || chunks.length === 0) {
-            chunks = await searchChunksLike(env, question, 8);
+            chunks = await searchChunksSubstring(env, question, 8);
           }
         } catch (searchError) {
-          console.error('Search failed in /ask, falling back to LIKE only', searchError);
-          chunks = await searchChunksLike(env, question, 8);
+          console.error('Search failed in /ask, falling back to substring only', searchError);
+          chunks = await searchChunksSubstring(env, question, 8);
         }
 
         let context = '';
