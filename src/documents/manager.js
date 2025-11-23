@@ -534,6 +534,117 @@ export class DocumentManager {
   }
 
   /**
+   * Replace placeholder content for an uploaded document with extracted text
+   * @param {string} documentId
+   * @param {string} text
+   * @param {Object} options
+   * @returns {Promise<{id: string, filename: string, pageCount: number, status: string, chunksInserted: number, category?: string, tags?: Array}>}
+   */
+  async ingestExtractedText(documentId, text, options = {}) {
+    await this.initialized;
+
+    const content = (text || '').toString();
+    if (!content.trim()) {
+      throw new Error('Text content is required');
+    }
+
+    const document = await this.db
+      .prepare('SELECT * FROM documents WHERE id = ?')
+      .bind(documentId)
+      .first();
+
+    if (!document) {
+      throw new Error('Document not found');
+    }
+
+    const parserVersion = options.parserVersion || 'openai-pdf-extract-v1';
+    const extractedBy = options.extractedBy || 'openai';
+    const now = new Date().toISOString();
+    const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
+    const characterCount = content.length;
+
+    const pageSegments = content.split(/\s*---PAGE BREAK---\s*/g);
+    let pages = pageSegments.map((page) => page.trim()).filter(Boolean);
+    if (pages.length === 0) {
+      pages = [content.trim()];
+    }
+
+    const pageCount = pages.length;
+
+    await this.db.prepare('DELETE FROM document_pages WHERE document_id = ?').bind(documentId).run();
+    await this.db.prepare('DELETE FROM document_chunks WHERE document_id = ?').bind(documentId).run();
+
+    const pageInsert = this.db.prepare(
+      'INSERT INTO document_pages (document_id, page_number, content, page_metadata) VALUES (?, ?, ?, ?)'
+    );
+
+    for (let i = 0; i < pages.length; i++) {
+      await pageInsert
+        .bind(documentId, i + 1, pages[i], JSON.stringify({ extractedBy, parserVersion }))
+        .run();
+    }
+
+    const chunks = splitIntoChunks(content);
+    const chunkResult = await this.saveDocumentChunks(documentId, chunks);
+
+    const parsedMetadata = options.parsedMetadata || {
+      extractedBy,
+      parserVersion,
+      originalFilename: document.original_filename,
+    };
+
+    const parsedStructure = {
+      pageCount,
+      wordCount,
+      characterCount,
+    };
+
+    await this.db
+      .prepare(`
+        UPDATE documents SET
+          status = 'parsed',
+          page_count = ?,
+          parsed_metadata = ?,
+          parsed_structure = ?,
+          parser_version = ?,
+          parse_timestamp = ?,
+          word_count = ?,
+          character_count = ?,
+          format = ?
+        WHERE id = ?
+      `)
+      .bind(
+        pageCount,
+        JSON.stringify(parsedMetadata),
+        JSON.stringify(parsedStructure),
+        parserVersion,
+        now,
+        wordCount,
+        characterCount,
+        document.content_type?.includes('pdf') ? 'pdf' : 'text',
+        documentId
+      )
+      .run();
+
+    let tags = [];
+    try {
+      tags = document.tags ? JSON.parse(document.tags) : [];
+    } catch {
+      tags = [];
+    }
+
+    return {
+      id: documentId,
+      filename: document.filename,
+      pageCount,
+      status: 'parsed',
+      chunksInserted: chunkResult.inserted,
+      category: document.category,
+      tags,
+    };
+  }
+
+  /**
    * Upload and process a document
    * @param {File|ArrayBuffer} file
    * @param {Object} metadata - {filename, contentType, uploadedBy, category, tags}

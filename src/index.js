@@ -3,8 +3,8 @@ import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
-import { extractTextFromFile, splitIntoChunks } from './documents/textProcessing.js';
 import { ingestDocumentText } from './documents/textIngestion.js';
+import { extractTextFromPdfWithOpenAI } from './documents/pdfExtraction.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -437,22 +437,64 @@ export default {
           });
         }
 
-        const result = await documentManager.uploadDocument(file, {
+        const contentType = file.type || 'application/octet-stream';
+
+        const uploadResult = await documentManager.uploadDocument(file, {
           filename: file.name,
-          contentType: file.type,
+          contentType,
           category,
           tags,
           uploadedBy: 'user'
         });
 
-        const fullText = await extractTextFromFile(file);
-        const chunks = splitIntoChunks(fullText);
-        const chunkResult = await documentManager.saveDocumentChunks(result.id, chunks);
+        let parsedResult;
+
+        if (contentType === 'application/pdf') {
+          let extractedText;
+          try {
+            extractedText = await extractTextFromPdfWithOpenAI(env, file, file.name);
+          } catch (error) {
+            try {
+              await env.DB.prepare(
+                'UPDATE documents SET status = "error", parsed_metadata = ? WHERE id = ?'
+              ).bind(
+                JSON.stringify({
+                  error: {
+                    message: error.message,
+                    timestamp: new Date().toISOString()
+                  }
+                }),
+                uploadResult.id
+              ).run();
+            } catch (dbError) {
+              console.error('Failed to record PDF extraction error:', dbError);
+            }
+            throw error;
+          }
+
+          parsedResult = await documentManager.ingestExtractedText(uploadResult.id, extractedText, {
+            parserVersion: 'openai-pdf-extract-v1',
+            extractedBy: 'openai-file-extract'
+          });
+        } else {
+          const textContent = await file.text();
+          parsedResult = await documentManager.ingestExtractedText(uploadResult.id, textContent, {
+            parserVersion: 'text-upload-v1',
+            extractedBy: 'text-upload'
+          });
+        }
+
+        try {
+          await upsertVectorsForDocument(env, parsedResult.id, parsedResult.filename, parsedResult.category ?? null);
+        } catch (vectorError) {
+          console.error('Vector upsert error (ignored):', vectorError);
+        }
 
         return new Response(JSON.stringify({
           success: true,
-          document: result,
-          chunksInserted: chunkResult.inserted
+          document: parsedResult,
+          documentId: parsedResult.id,
+          chunksInserted: parsedResult.chunksInserted
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
