@@ -71,6 +71,30 @@ You have access to specialized tools - use them when appropriate to provide the 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
+const STOP_WORDS = new Set([
+  'what', 'is', 'the', 'for', 'and', 'or', 'a', 'an', 'to', 'of', 'in', 'on', 'at', 'from',
+  'does', 'do', 'be', 'are', 'am', 'i', 'you', 'we', 'they', 'it', 'this', 'that', 'these', 'those',
+  'tell', 'me', 'about', 'please', 'maximum', 'minimum', 'length'
+]);
+
+function extractKeywords(question, maxKeywords = 5) {
+  const lower = question.toLowerCase();
+  const cleaned = lower.replace(/[^a-z0-9\s]/g, ' ');
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+
+  const keywords = [];
+  for (const word of parts) {
+    if (STOP_WORDS.has(word)) continue;
+    if (word.length < 3) continue;
+    if (!keywords.includes(word)) {
+      keywords.push(word);
+    }
+  }
+
+  if (keywords.length === 0) return [cleaned.trim()].filter(Boolean);
+  return keywords.slice(0, maxKeywords);
+}
+
 async function embedText(env, input) {
   const apiKey = env.OPENAI_API_KEY;
   const model = env.OPENAI_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
@@ -101,9 +125,23 @@ async function embedText(env, input) {
   return embedding;
 }
 
-async function searchChunksSubstring(env, query, limit = 8) {
+async function searchChunksSimple(env, question, limit = 8) {
   const db = env.DB;
-  const lowered = query.toLowerCase();
+  const keywords = extractKeywords(question, 5);
+
+  if (!keywords.length) return [];
+
+  const conditions = [];
+  const bindValues = [];
+
+  keywords.forEach((kw, i) => {
+    const idx = i + 1;
+    conditions.push(`INSTR(LOWER(dc.chunk_text), ?${idx}) > 0`);
+    bindValues.push(kw);
+  });
+
+  const whereClause = conditions.join(' OR ');
+  const limitParamIndex = keywords.length + 1;
 
   const sql = `
     SELECT
@@ -115,11 +153,13 @@ async function searchChunksSubstring(env, query, limit = 8) {
       d.category
     FROM document_chunks dc
     JOIN documents d ON d.id = dc.document_id
-    WHERE INSTR(LOWER(dc.chunk_text), ?1) > 0
-    LIMIT ?2;
+    WHERE ${whereClause}
+    LIMIT ?${limitParamIndex};
   `;
 
-  const { results } = await db.prepare(sql).bind(lowered, limit).all();
+  bindValues.push(limit);
+
+  const { results } = await db.prepare(sql).bind(...bindValues).all();
 
   return (results || []).map((row) => ({
     text: row.chunk_text,
@@ -668,11 +708,11 @@ export default {
           }
 
           if (!chunks || chunks.length === 0) {
-            chunks = await searchChunksSubstring(env, question, 8);
+            chunks = await searchChunksSimple(env, question, 8);
           }
         } catch (searchError) {
-          console.error('Search failed in /ask, falling back to substring only', searchError);
-          chunks = await searchChunksSubstring(env, question, 8);
+          console.error('Search failed in /ask, falling back to keyword search only', searchError);
+          chunks = await searchChunksSimple(env, question, 8);
         }
 
         let context = '';
