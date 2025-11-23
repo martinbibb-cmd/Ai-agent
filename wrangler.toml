@@ -22,7 +22,7 @@ bucket_name = "agentstorage"
 [[d1_databases]]
 binding = "DB"
 database_name = "agent-db"
-database_id = "0bef3501-1915-4566-8fa9-2f63f1d3bd84"
+database_id = "87400a56-0eff-4ac0-9bed-3f08ef2e0e79"
 
 # Asset bindings for serving static files
 [assets]
@@ -30,16 +30,5 @@ directory = "public"
 
 # Observability configuration
 [observability]
-enabled = false
-head_sampling_rate = 1
-
-[observability.logs]
 enabled = true
-head_sampling_rate = 1
-persist = true
-invocation_logs = true
-
-[observability.traces]
-enabled = false
-persist = true
 head_sampling_rate = 1

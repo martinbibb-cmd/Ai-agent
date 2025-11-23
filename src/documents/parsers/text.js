@@ -20,8 +20,8 @@ export class TextParser extends BaseParser {
   async parse(buffer, fileInfo = {}) {
     try {
       // Decode text with multiple encoding attempts
-      const text = this.decodeText(buffer);
-      const cleanText = this.sanitizeText(text);
+      const decodeResult = this.decodeText(buffer);
+      const cleanText = this.sanitizeText(decodeResult.text);
 
       // Detect format
       const format = this.detectTextFormat(cleanText, fileInfo);
@@ -31,7 +31,11 @@ export class TextParser extends BaseParser {
 
       // Create metadata
       const language = this.detectLanguage(cleanText);
-      const metadata = this.createMetadata(fileInfo, { language });
+      const metadata = this.createMetadata(fileInfo, {
+        language,
+        encoding: decodeResult.encoding,
+        encodingWarning: decodeResult.warning || null
+      });
 
       // Create structure
       const fullText = pages.map(p => p.content).join('\n\n');
@@ -40,7 +44,7 @@ export class TextParser extends BaseParser {
       // Create chunks
       const chunks = this.chunkText(fullText);
 
-      return {
+      const result = {
         format,
         metadata,
         structure,
@@ -51,61 +55,60 @@ export class TextParser extends BaseParser {
         parser: {
           name: 'TextParser',
           version: '2.0',
-          encoding: 'utf-8'
+          encoding: decodeResult.encoding
         }
       };
+
+      // Add warning if fallback encoding was used
+      if (decodeResult.fallback) {
+        result.warning = decodeResult.warning;
+        console.warn('[TextParser] Encoding warning:', decodeResult.warning);
+      }
+
+      return result;
 
     } catch (error) {
-      console.error('Text parsing error:', error);
+      console.error('[TextParser] Text parsing error:', error);
 
-      return {
-        format: 'txt',
-        metadata: this.createMetadata(fileInfo, {}),
-        structure: {
-          pageCount: 1,
-          wordCount: 0,
-          characterCount: 0,
-          sections: []
-        },
-        pages: [{
-          pageNumber: 1,
-          content: 'Text file uploaded but parsing failed',
-          metadata: {
-            error: error.message,
-            headers: [],
-            wordCount: 0
-          }
-        }],
-        fullText: 'Text file uploaded but parsing failed',
-        chunks: [],
-        parseTimestamp: new Date().toISOString(),
-        error: {
-          message: error.message,
-          type: 'parsing_error'
-        }
-      };
+      // Don't return fallback - throw the error so it's properly handled
+      const enhancedError = new Error(`Text parsing failed: ${error.message}`);
+      enhancedError.code = 'TEXT_PARSE_ERROR';
+      enhancedError.originalError = error;
+      throw enhancedError;
     }
   }
 
   /**
    * Decode text with fallback encodings
    * @param {ArrayBuffer} buffer
-   * @returns {string}
+   * @returns {Object} - {text: string, encoding: string, fallback: boolean}
    */
   decodeText(buffer) {
     const encodings = ['utf-8', 'latin1', 'windows-1252'];
 
+    // Try each encoding with strict validation
     for (const encoding of encodings) {
       try {
         const decoder = new TextDecoder(encoding, { fatal: true });
-        return decoder.decode(buffer);
+        const text = decoder.decode(buffer);
+        console.log(`[TextParser] Successfully decoded with ${encoding}`);
+        return { text, encoding, fallback: false };
       } catch (e) {
+        console.log(`[TextParser] Failed to decode with ${encoding}: ${e.message}`);
         continue;
       }
     }
 
-    // Final fallback
-    return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+    // Final fallback - allows errors but produces potentially garbled text
+    console.warn('[TextParser] All strict decodings failed, using lossy UTF-8 fallback');
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+
+    return {
+      text,
+      encoding: 'utf-8 (lossy)',
+      fallback: true,
+      warning: 'File encoding could not be detected reliably. Text may contain errors.'
+    };
   }
 
   /**

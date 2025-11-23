@@ -6,6 +6,7 @@
 
 import { BaseParser } from './base.js';
 import { getDocumentProxy, extractText } from 'unpdf';
+import { validatePDF } from '../fileSignature.js';
 
 export class PDFParser extends BaseParser {
   constructor(options = {}) {
@@ -19,9 +20,24 @@ export class PDFParser extends BaseParser {
    * @returns {Promise<ParsedDocument>}
    */
   async parse(buffer, fileInfo = {}) {
-    try {
-      console.log(`[PDFParser] Starting parse for ${fileInfo.name}, size: ${buffer.byteLength} bytes`);
+    console.log(`[PDFParser] Starting parse for ${fileInfo.name}, size: ${buffer.byteLength} bytes`);
 
+    // Validate PDF structure before attempting to parse
+    const validation = validatePDF(buffer);
+    console.log('[PDFParser] PDF validation:', validation);
+
+    if (!validation.isValid) {
+      const error = new Error(validation.message);
+      error.code = 'INVALID_PDF';
+      error.validation = validation;
+      throw error;
+    }
+
+    if (validation.encrypted) {
+      console.warn('[PDFParser] PDF is encrypted - text extraction may fail');
+    }
+
+    try {
       // Get PDF document proxy using unpdf
       console.log('[PDFParser] Creating document proxy...');
       const pdf = await getDocumentProxy(new Uint8Array(buffer));
@@ -96,34 +112,28 @@ export class PDFParser extends BaseParser {
         cause: error.cause
       });
 
-      // Return safe fallback with error information
-      return {
-        format: 'pdf',
-        metadata: this.createMetadata(fileInfo, {}),
-        structure: {
-          pageCount: 1,
-          wordCount: 0,
-          characterCount: 0,
-          sections: []
-        },
-        pages: [{
-          pageNumber: 1,
-          content: 'PDF uploaded but text extraction failed: ' + error.message,
-          metadata: {
-            error: error.message,
-            headers: [],
-            wordCount: 0
-          }
-        }],
-        fullText: 'PDF uploaded but text extraction failed: ' + error.message,
-        chunks: [],
-        parseTimestamp: new Date().toISOString(),
-        error: {
-          message: error.message,
-          type: 'parsing_error',
-          stack: error.stack
-        }
-      };
+      // Create enhanced error with specific codes for different failure types
+      const enhancedError = new Error(`PDF parsing failed: ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.fileName = fileInfo.name;
+      enhancedError.fileSize = buffer.byteLength;
+
+      // Classify error types
+      if (error.message?.includes('password') || error.message?.includes('encrypted')) {
+        enhancedError.code = 'PDF_ENCRYPTED';
+        enhancedError.userMessage = 'This PDF is password-protected and cannot be parsed.';
+      } else if (error.message?.includes('getDocumentProxy') || error.name === 'InvalidPDFException') {
+        enhancedError.code = 'PDF_CORRUPTED';
+        enhancedError.userMessage = 'This PDF appears to be corrupted or invalid.';
+      } else if (error.message?.includes('memory') || error.message?.includes('out of')) {
+        enhancedError.code = 'PDF_TOO_LARGE';
+        enhancedError.userMessage = 'This PDF is too large or complex to process.';
+      } else {
+        enhancedError.code = 'PDF_PARSE_ERROR';
+        enhancedError.userMessage = 'An error occurred while parsing this PDF.';
+      }
+
+      throw enhancedError;
     }
   }
 
