@@ -70,19 +70,40 @@ You have access to specialized tools - use them when appropriate to provide the 
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 
-async function searchChunks(env, query, limit = 8) {
-  const db = env.DB;
-  const stmt = `
-    SELECT dc.chunk_text AS text, d.filename AS document_name, d.id AS document_id, dc.chunk_index
+function buildFtsMatchQuery(rawQuery, limit) {
+  const escaped = rawQuery.replace(/'/g, "''");
+
+  const sql = `
+    SELECT
+      dc.chunk_text AS text,
+      dc.document_id,
+      dc.page_number,
+      dc.chunk_index,
+      d.filename AS document_name,
+      d.category
     FROM document_chunks_fts f
     JOIN document_chunks dc ON dc.id = f.rowid
     JOIN documents d ON d.id = dc.document_id
-    WHERE document_chunks_fts MATCH ?
-    LIMIT ?;
+    WHERE document_chunks_fts MATCH '${escaped}'
+    LIMIT ?1;
   `;
 
-  const { results } = await db.prepare(stmt).bind(query, limit).all();
-  return results || [];
+  return { sql, bind: [limit] };
+}
+
+async function searchChunks(env, query, limit = 8) {
+  const db = env.DB;
+  const { sql, bind } = buildFtsMatchQuery(query, limit);
+  const { results } = await db.prepare(sql).bind(...bind).all();
+
+  return (results || []).map((row) => ({
+    text: row.text,
+    document_id: row.document_id,
+    document_name: row.document_name,
+    page_number: row.page_number,
+    chunk_index: row.chunk_index,
+    category: row.category,
+  }));
 }
 
 async function callOpenAI(env, messages) {
