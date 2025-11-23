@@ -223,6 +223,15 @@
             color: #c62828;
         }
 
+        .upload-status-card {
+            background: #fff;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+        }
+
+        .status-chip {
+            font-weight: 600;
+        }
+
         .hidden {
             display: none;
         }
@@ -262,9 +271,9 @@
         <div class="upload-section">
             <h2 style="margin-bottom: 16px;">Upload New Document</h2>
             <div class="upload-area" id="uploadArea">
-                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF file here or click to browse</p>
-                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB</p>
-                <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+                <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF files here or click to browse</p>
+                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB each (multiple allowed)</p>
+                <input type="file" id="fileInput" accept="application/pdf" multiple style="display: none;">
             </div>
 
             <div class="upload-form">
@@ -313,28 +322,30 @@
 
     <script>
         const API_BASE_URL = `${window.location.origin}/api`;
-        let selectedFile = null;
+        let selectedFiles = [];
         const uploadInfoEl = document.getElementById('uploadInfo');
         const uploadStatusEl = document.getElementById('uploadStatus');
         const uploadProgressContainer = document.getElementById('uploadProgressContainer');
         const uploadProgressBar = document.getElementById('uploadProgressBar');
+        const uploadQueueEl = document.createElement('div');
+        uploadQueueEl.id = 'uploadQueue';
+        uploadQueueEl.style.marginTop = '12px';
+        document.querySelector('.upload-section').appendChild(uploadQueueEl);
 
-        function setUploadInfo(file, phase = 'selected') {
+        function setUploadInfo(files = []) {
             if (!uploadInfoEl) return;
 
-            if (!file) {
+            if (!files.length) {
                 uploadInfoEl.textContent = '';
                 return;
             }
 
-            const sizeKb = Math.max(1, Math.round(file.size / 1024));
-            const prefix = phase === 'uploading'
-                ? 'Uploading'
-                : phase === 'done'
-                    ? 'Finished'
-                    : 'Selected';
+            const totalSizeKb = files.reduce((sum, file) => sum + Math.max(1, Math.round(file.size / 1024)), 0);
+            const label = files.length === 1
+                ? `${files[0].name} (${Math.max(1, Math.round(files[0].size / 1024))} KB)`
+                : `${files.length} files (${totalSizeKb} KB total)`;
 
-            uploadInfoEl.textContent = `${prefix}: ${file.name} (${sizeKb} KB)`;
+            uploadInfoEl.textContent = `Selected: ${label}`;
         }
 
         function setUploadStatus(message, type) {
@@ -383,156 +394,218 @@
             uploadArea.addEventListener('drop', (e) => {
                 e.preventDefault();
                 uploadArea.classList.remove('dragover');
-                const files = e.dataTransfer.files;
+                const files = Array.from(e.dataTransfer.files || []);
                 if (files.length > 0) {
-                    handleFileSelect(files[0]);
+                    handleFileSelect(files);
                 }
             });
 
             fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) {
-                    handleFileSelect(e.target.files[0]);
+                const files = Array.from(e.target.files || []);
+                if (files.length > 0) {
+                    handleFileSelect(files);
                 }
             });
 
-            uploadButton.addEventListener('click', uploadDocument);
+            uploadButton.addEventListener('click', uploadDocuments);
         }
 
-        function handleFileSelect(file) {
-            if (file.type !== 'application/pdf') {
-                showStatus('Only PDF files are supported', 'error');
+        function handleFileSelect(files) {
+            const validFiles = Array.from(files).filter(file => {
+                if (file.type !== 'application/pdf') {
+                    showStatus(`Only PDF files are supported (skipped ${file.name})`, 'error');
+                    return false;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                    showStatus(`File ${file.name} must be less than 10MB`, 'error');
+                    return false;
+                }
+                return true;
+            });
+
+            if (!validFiles.length) {
                 return;
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                showStatus('File size must be less than 10MB', 'error');
-                return;
-            }
-
-            selectedFile = file;
+            selectedFiles = validFiles;
             setUploadStatus('', null);
             resetUploadProgress();
-            setUploadInfo(file, 'selected');
-            document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${file.name}`;
+            setUploadInfo(validFiles);
+            document.getElementById('uploadArea').querySelector('p').textContent = `Selected: ${validFiles.length} file(s)`;
             document.getElementById('uploadButton').disabled = false;
         }
 
-        function uploadDocument() {
-            if (!selectedFile) {
-                setUploadStatus('Please select a PDF to upload.', 'error');
+        function createFileStatusRow(file) {
+            const row = document.createElement('div');
+            row.className = 'upload-status-card';
+            row.style.border = '1px solid #e5e7eb';
+            row.style.borderRadius = '10px';
+            row.style.padding = '10px 12px';
+            row.style.marginBottom = '8px';
+            row.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px;">
+                    <div style="font-weight: 600; color: #111827;">${file.name}</div>
+                    <div class="status-chip" style="background: #eef2ff; color: #4f46e5; padding: 4px 8px; border-radius: 999px; font-size: 12px;">Queued</div>
+                </div>
+                <div class="progress-block" style="margin-top: 4px;">
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Upload</div>
+                    <div class="upload-progress" style="height: 8px; background: #f3f4f6; border-radius: 999px; overflow: hidden;">
+                        <div class="upload-progress-bar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #667eea, #764ba2);"></div>
+                    </div>
+                </div>
+                <div class="progress-block" style="margin-top: 8px;">
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Processing</div>
+                    <div class="processing-progress" style="height: 8px; background: #f3f4f6; border-radius: 999px; overflow: hidden;">
+                        <div class="processing-progress-bar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #34d399);"></div>
+                    </div>
+                </div>
+            `;
+            return row;
+        }
+
+        function updateFileStatus(row, type, message) {
+            const chip = row.querySelector('.status-chip');
+            if (!chip) return;
+            chip.textContent = message;
+            chip.style.background = type === 'error' ? '#fef2f2' : '#eef2ff';
+            chip.style.color = type === 'error' ? '#b91c1c' : '#4f46e5';
+        }
+
+        function setBarProgress(row, selector, percent) {
+            const bar = row.querySelector(selector);
+            if (bar) {
+                bar.style.width = `${percent}%`;
+            }
+        }
+
+        function pulseProcessing(row) {
+            let current = 0;
+            const interval = setInterval(() => {
+                current = Math.min(90, current + 5);
+                setBarProgress(row, '.processing-progress-bar', current);
+            }, 400);
+            return interval;
+        }
+
+        function uploadSingleFile(file, category, tags) {
+            return new Promise((resolve) => {
+                const row = createFileStatusRow(file);
+                uploadQueueEl.appendChild(row);
+                updateFileStatus(row, 'info', 'Uploading');
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('category', category);
+                if (tags.length > 0) {
+                    formData.append('tags', JSON.stringify(tags));
+                }
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `${API_BASE_URL}/documents/upload`, true);
+
+                let processingInterval = null;
+
+                xhr.upload.onprogress = function(event) {
+                    if (event.lengthComputable) {
+                        const percent = Math.round((event.loaded / event.total) * 100);
+                        setBarProgress(row, '.upload-progress-bar', percent);
+                        if (percent >= 100 && !processingInterval) {
+                            updateFileStatus(row, 'info', 'Processing');
+                            processingInterval = pulseProcessing(row);
+                        }
+                    }
+                };
+
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState !== XMLHttpRequest.DONE) return;
+                    if (processingInterval) {
+                        clearInterval(processingInterval);
+                    }
+
+                    let data = null;
+                    try {
+                        const contentType = xhr.getResponseHeader('Content-Type') || '';
+                        if (contentType.includes('application/json')) {
+                            data = JSON.parse(xhr.responseText || '{}');
+                        }
+                    } catch (err) {
+                        console.error('Error parsing upload response', err);
+                    }
+
+                    if (!xhr.status || xhr.status >= 400 || (data && data.ok === false)) {
+                        const message = (data && (data.error || data.details)) || `Upload failed (${xhr.status})`;
+                        updateFileStatus(row, 'error', 'Failed');
+                        setBarProgress(row, '.processing-progress-bar', 0);
+                        setUploadStatus(message, 'error');
+                        showStatus(`Upload failed for ${file.name}: ${message}`, 'error');
+                        return resolve(false);
+                    }
+
+                    const resultEntry = Array.isArray(data?.results) ? data.results.find(r => r.filename === file.name) : null;
+                    const chunks = resultEntry?.chunksInserted != null ? ` (${resultEntry.chunksInserted} chunks)` : '';
+                    updateFileStatus(row, 'ok', 'Done');
+                    setBarProgress(row, '.upload-progress-bar', 100);
+                    setBarProgress(row, '.processing-progress-bar', 100);
+                    setUploadStatus(`Upload succeeded: ${file.name}${chunks}`, 'ok');
+                    showStatus(`Document "${file.name}" uploaded successfully!`, 'success');
+                    resolve(true);
+                };
+
+                xhr.onerror = function() {
+                    if (processingInterval) {
+                        clearInterval(processingInterval);
+                    }
+                    updateFileStatus(row, 'error', 'Failed');
+                    setUploadStatus('Network error while uploading file.', 'error');
+                    showStatus(`Network error while uploading ${file.name}.`, 'error');
+                    resolve(false);
+                };
+
+                xhr.send(formData);
+            });
+        }
+
+        async function uploadDocuments() {
+            if (!selectedFiles.length) {
+                setUploadStatus('Please select at least one PDF to upload.', 'error');
                 return;
             }
 
             const uploadButton = document.getElementById('uploadButton');
             const uploadArea = document.getElementById('uploadArea');
-            const fileForStatus = selectedFile;
-
             uploadButton.disabled = true;
             uploadButton.textContent = 'Uploading...';
+            uploadQueueEl.innerHTML = '';
 
             setUploadStatus('', null);
             resetUploadProgress();
-            setUploadInfo(fileForStatus, 'uploading');
+            setUploadInfo(selectedFiles);
 
-            const formData = new FormData();
-            formData.append('file', selectedFile);
-            formData.append('category', document.getElementById('categorySelect').value);
-
+            const category = document.getElementById('categorySelect').value;
             const tags = document.getElementById('tagsInput').value
                 .split(',')
                 .map(t => t.trim())
                 .filter(t => t);
 
-            if (tags.length > 0) {
-                formData.append('tags', JSON.stringify(tags));
+            const results = await Promise.all(selectedFiles.map(file => uploadSingleFile(file, category, tags)));
+
+            uploadButton.disabled = false;
+            uploadButton.textContent = 'Upload Document';
+
+            if (results.every(Boolean)) {
+                selectedFiles = [];
+                setUploadInfo([]);
+                document.getElementById('tagsInput').value = '';
+                document.getElementById('fileInput').value = '';
+                if (uploadArea) {
+                    const textEls = uploadArea.querySelectorAll('p');
+                    if (textEls.length > 0) {
+                        textEls[0].textContent = '📁 Drop PDF files here or click to browse';
+                    }
+                }
+                loadDocuments();
             }
-
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${API_BASE_URL}/documents/upload`, true);
-
-            xhr.upload.onprogress = function(event) {
-                if (event.lengthComputable && uploadProgressContainer && uploadProgressBar) {
-                    const percent = Math.round((event.loaded / event.total) * 100);
-                    uploadProgressContainer.classList.remove('hidden');
-                    uploadProgressBar.style.width = `${percent}%`;
-                }
-            };
-
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState !== XMLHttpRequest.DONE) return;
-
-                uploadButton.disabled = false;
-                uploadButton.textContent = 'Upload Document';
-
-                let data = null;
-
-                try {
-                    const contentType = xhr.getResponseHeader('Content-Type') || '';
-                    if (contentType.includes('application/json')) {
-                        data = JSON.parse(xhr.responseText || '{}');
-                    }
-                } catch (err) {
-                    console.error('Error parsing upload response', err);
-                    setUploadStatus('Upload completed, but response could not be parsed.', 'error');
-                    showStatus('Upload completed, but response could not be parsed.', 'error');
-                    return;
-                }
-
-                if (!xhr.status || xhr.status >= 400) {
-                    const message = (data && (data.error || data.details)) || `Upload failed with status ${xhr.status}`;
-                    setUploadStatus(message, 'error');
-                    showStatus(`Upload failed: ${message}`, 'error');
-                    return;
-                }
-
-                if (uploadProgressContainer && !uploadProgressContainer.classList.contains('hidden')) {
-                    uploadProgressBar.style.width = '100%';
-                }
-
-                if (data && data.ok === false) {
-                    const message = data.error || 'Upload failed.';
-                    setUploadStatus(message, 'error');
-                    showStatus(`Upload failed: ${message}`, 'error');
-                    return;
-                }
-
-                if (data && data.ok) {
-                    const chunks = data.chunksInserted != null ? ` (${data.chunksInserted} chunks)` : '';
-                    const docId = data.documentId || (data.document && data.document.id) || 'document';
-                    setUploadStatus(`Upload succeeded: ${docId}${chunks}`, 'ok');
-                    showStatus(`Document "${fileForStatus.name}" uploaded successfully!`, 'success');
-
-                    selectedFile = null;
-                    setUploadInfo(fileForStatus, 'done');
-                    resetUploadProgress();
-                    document.getElementById('uploadButton').disabled = true;
-                    document.getElementById('tagsInput').value = '';
-                    document.getElementById('fileInput').value = '';
-
-                    if (uploadArea) {
-                        const textEls = uploadArea.querySelectorAll('p');
-                        if (textEls.length > 0) {
-                            textEls[0].textContent = '📁 Drop PDF file here or click to browse';
-                        }
-                    }
-
-                    loadDocuments();
-                } else {
-                    setUploadStatus('Upload completed, but server did not return a standard response.', 'ok');
-                    showStatus('Upload completed.', 'success');
-                }
-            };
-
-            xhr.onerror = function() {
-                uploadButton.disabled = false;
-                uploadButton.textContent = 'Upload Document';
-                setUploadStatus('Network error while uploading file.', 'error');
-                showStatus('Network error while uploading file.', 'error');
-            };
-
-            xhr.send(formData);
         }
-
         async function loadDocuments() {
             const documentsList = document.getElementById('documentsList');
             documentsList.innerHTML = '<div class="loading">Loading documents...</div>';
