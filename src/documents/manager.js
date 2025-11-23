@@ -1,5 +1,6 @@
 import { DocumentParser } from './parsers/index.js';
 import { validateFileSignature, detectFileType, getFileTypeName } from './fileSignature.js';
+import { splitIntoChunks } from './textProcessing.js';
 
 /**
  * Document Manager - handles document upload, storage, and retrieval
@@ -430,6 +431,106 @@ export class DocumentManager {
     }
 
     return { inserted: chunks.length };
+  }
+
+  /**
+   * Ingest plain text directly into documents and chunk tables
+   * @param {Object} options - { filename, originalFilename, contentType, uploadedBy, category, tags, text }
+   */
+  async ingestTextDocument(options = {}) {
+    await this.initialized;
+
+    const text = (options.text || '').toString();
+
+    if (!text.trim()) {
+      throw new Error('Text content is required');
+    }
+
+    const documentId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const now = new Date().toISOString();
+    const providedFilename = (options.filename || `text-upload-${Date.now()}.txt`).toString();
+    const cleanFilename = providedFilename
+      .replace(/[^\x20-\x7E]/g, '_')
+      .replace(/['"]/g, '')
+      .trim();
+
+    const tags = Array.isArray(options.tags) ? options.tags : [];
+    const contentType = options.contentType || 'text/plain';
+    const category = options.category || 'general';
+    const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const characterCount = text.length;
+
+    const parsedMetadata = {
+      title: options.originalFilename || cleanFilename,
+      language: 'unknown',
+      size: characterCount,
+      contentType,
+    };
+
+    const parsedStructure = {
+      pageCount: 1,
+      wordCount,
+      characterCount,
+      sections: [],
+    };
+
+    try {
+      await this.db
+        .prepare(`
+          INSERT INTO documents (
+            id, filename, original_filename, content_type, file_size,
+            uploaded_at, uploaded_by, category, tags, r2_key, page_count, status,
+            format, language, parsed_metadata, parsed_structure, parser_version,
+            parse_timestamp, word_count, character_count
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .bind(
+          documentId,
+          cleanFilename,
+          options.originalFilename || cleanFilename,
+          contentType,
+          characterCount,
+          now,
+          options.uploadedBy || null,
+          category,
+          JSON.stringify(tags),
+          `text://${documentId}`,
+          1,
+          'parsed',
+          'text',
+          'unknown',
+          JSON.stringify(parsedMetadata),
+          JSON.stringify(parsedStructure),
+          'text-upload-v1',
+          now,
+          wordCount,
+          characterCount
+        )
+        .run();
+
+      await this.db
+        .prepare(
+          `INSERT INTO document_pages (document_id, page_number, content, page_metadata) VALUES (?, ?, ?, ?)`
+        )
+        .bind(documentId, 1, text, JSON.stringify({ createdFrom: 'text-upload' }))
+        .run();
+
+      const chunks = splitIntoChunks(text);
+      const chunkResult = await this.saveDocumentChunks(documentId, chunks);
+
+      return {
+        id: documentId,
+        filename: cleanFilename,
+        pageCount: 1,
+        status: 'parsed',
+        category,
+        tags,
+        chunksInserted: chunkResult.inserted,
+      };
+    } catch (error) {
+      console.error('Text ingestion error:', error);
+      throw new Error(`Failed to ingest text document: ${error.message}`);
+    }
   }
 
   /**

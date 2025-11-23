@@ -72,7 +72,7 @@ const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 async function searchChunks(env, query, limit = 8) {
   const db = env.DB;
   const stmt = `
-    SELECT dc.chunk_text AS text, d.filename AS document_name
+    SELECT dc.chunk_text AS text, d.filename AS document_name, d.id AS document_id, dc.chunk_index
     FROM document_chunks_fts f
     JOIN document_chunks dc ON dc.id = f.rowid
     JOIN documents d ON d.id = dc.document_id
@@ -132,7 +132,9 @@ export default {
         !url.pathname.startsWith('/voices') &&
         !url.pathname.startsWith('/tools') &&
         !url.pathname.startsWith('/health') &&
-        !url.pathname.startsWith('/api')) {
+        !url.pathname.startsWith('/api') &&
+        !url.pathname.startsWith('/documents') &&
+        url.pathname !== '/ask') {
 
       if (env.ASSETS) {
         try {
@@ -156,6 +158,86 @@ export default {
           'Content-Type': 'application/json',
         },
       });
+    }
+
+    // Direct text ingestion endpoint
+    if (url.pathname === '/documents/text' && request.method === 'POST') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const body = await request.json();
+        const text = (body?.text || '').toString();
+
+        if (!text.trim()) {
+          return new Response(JSON.stringify({
+            ok: false,
+            error: "'text' is required and cannot be empty"
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        let filename = (body?.filename || '').toString().trim();
+        if (!filename) {
+          filename = `text-upload-${Date.now()}.txt`;
+        }
+
+        const category = (body?.category || 'general').toString();
+
+        let tags = [];
+        if (body?.tags !== undefined) {
+          if (!Array.isArray(body.tags)) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: 'tags must be an array of strings'
+            }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          tags = body.tags.map(tag => tag?.toString()).filter(Boolean);
+        }
+
+        const result = await documentManager.ingestTextDocument({
+          filename,
+          originalFilename: body?.originalFilename || filename,
+          contentType: 'text/plain',
+          uploadedBy: 'user',
+          category,
+          tags,
+          text
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          documentId: result.id,
+          chunksInserted: result.chunksInserted || 0,
+          filename: result.filename,
+          category: result.category ?? null,
+          tags: result.tags ?? []
+        }), {
+          status: 201,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('Text ingestion error:', error);
+        return new Response(JSON.stringify({
+          ok: false,
+          error: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Upload document endpoint
@@ -476,10 +558,7 @@ export default {
 
         let context = '';
         for (const c of chunks) {
-          context += `[Document: ${c.document_name}]
-${c.text}
-
-`;
+          context += `[Document: ${c.document_name} | ID: ${c.document_id} | Chunk ${c.chunk_index ?? 0}]\n${c.text}\n\n`;
         }
 
         const messages = [
@@ -787,6 +866,7 @@ ${c.text}
           '/': 'GET - Chat Interface',
           '/documents.html': 'GET - Document Manager',
           '/data/personas.json': 'GET - Get available personas',
+          '/documents/text': 'POST - Ingest raw text content as a document',
           '/agent': 'POST - Send message to agent (with tool calling)',
           '/api/documents/upload': 'POST - Upload PDF document',
           '/api/documents': 'GET - List documents',
