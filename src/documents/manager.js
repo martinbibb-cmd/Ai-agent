@@ -164,7 +164,19 @@ export class DocumentManager {
           )
         `).run();
 
-        // Create insert trigger
+        console.log('FTS table created');
+      }
+
+      // Ensure triggers exist even if table was pre-created via migrations
+      const triggers = await this.db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='trigger' AND name IN ('documents_fts_insert', 'documents_fts_delete')
+      `).all();
+
+      const existingTriggers = new Set((triggers.results || []).map((t) => t.name));
+
+      if (!existingTriggers.has('documents_fts_insert')) {
+        console.log('Creating FTS insert trigger...');
         await this.db.prepare(`
           CREATE TRIGGER documents_fts_insert AFTER INSERT ON document_pages BEGIN
             INSERT INTO documents_fts(rowid, document_id, filename, content)
@@ -175,19 +187,18 @@ export class DocumentManager {
               new.content;
           END
         `).run();
+      }
 
-        // Create delete trigger
+      if (!existingTriggers.has('documents_fts_delete')) {
+        console.log('Creating FTS delete trigger...');
         await this.db.prepare(`
           CREATE TRIGGER documents_fts_delete AFTER DELETE ON document_pages BEGIN
             DELETE FROM documents_fts WHERE rowid = old.id;
           END
         `).run();
-
-        console.log('FTS tables and triggers created successfully');
-      } else {
-        console.log('FTS table already exists');
       }
 
+      console.log('FTS tables and triggers are ready');
       return true;
     } catch (error) {
       console.error('FTS initialization error:', error);
@@ -201,6 +212,9 @@ export class DocumentManager {
   async rebuildFTSIndex() {
     try {
       console.log('Rebuilding FTS index...');
+
+      // Ensure FTS schema exists before attempting to rebuild
+      await this.initializeFTS();
 
       // Clear existing FTS data
       await this.db.prepare(`DELETE FROM documents_fts`).run();
