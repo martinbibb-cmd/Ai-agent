@@ -69,8 +69,39 @@ IMPORTANT INSTRUCTIONS:
 You have access to specialized tools - use them when appropriate to provide the best assistance.`;
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
-async function searchChunks(env, query, limit = 8) {
+async function embedText(env, input) {
+  const apiKey = env.OPENAI_API_KEY;
+  const model = env.OPENAI_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
+
+  const response = await fetch('https://api.openai.com/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      input,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI embeddings error: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  const embedding = data.data?.[0]?.embedding;
+  if (!embedding) {
+    throw new Error('No embedding returned');
+  }
+
+  return embedding;
+}
+
+async function searchChunksLike(env, query, limit = 8) {
   const db = env.DB;
   const lowered = query.toLowerCase();
 
@@ -98,6 +129,100 @@ async function searchChunks(env, query, limit = 8) {
     filename: row.filename ?? null,
     category: row.category ?? null,
   }));
+}
+
+async function upsertVectorsForDocument(env, documentId, filename, category) {
+  if (!env.DOC_INDEX) return;
+
+  const { results } = await env.DB.prepare(
+    'SELECT chunk_text, page_number, chunk_index FROM document_chunks WHERE document_id = ?1'
+  ).bind(documentId).all();
+
+  const chunks = results || [];
+  const vectors = [];
+
+  for (const row of chunks) {
+    const text = row.chunk_text;
+    if (!text || !text.trim()) {
+      continue;
+    }
+
+    const embedding = await embedText(env, text);
+    const id = `${documentId}::${row.chunk_index}`;
+
+    vectors.push({
+      id,
+      values: embedding,
+      metadata: {
+        documentId,
+        filename,
+        category,
+        pageNumber: row.page_number,
+        chunkIndex: row.chunk_index,
+      },
+    });
+  }
+
+  if (vectors.length && env.DOC_INDEX) {
+    await env.DOC_INDEX.upsert(vectors);
+  }
+}
+
+async function fetchChunkText(env, documentId, chunkIndex) {
+  const row = await env.DB.prepare(
+    'SELECT chunk_text, page_number FROM document_chunks WHERE document_id = ?1 AND chunk_index = ?2'
+  ).bind(documentId, chunkIndex).first();
+
+  return {
+    text: row?.chunk_text || '',
+    pageNumber: row?.page_number ?? null,
+  };
+}
+
+async function searchChunksVector(env, query, topK = 8) {
+  if (!env.DOC_INDEX) return [];
+
+  const embedding = await embedText(env, query);
+  const result = await env.DOC_INDEX.query({
+    vector: embedding,
+    topK,
+    returnValues: false,
+    returnMetadata: true,
+  });
+
+  const matches = result.matches || [];
+  const chunks = [];
+
+  for (const match of matches) {
+    const metadata = match.metadata || {};
+    const documentId = metadata.documentId || '';
+    const chunkIndex = metadata.chunkIndex ?? 0;
+    const pageNumberFromMetadata = metadata.pageNumber ?? null;
+
+    let text = metadata.chunk_text || '';
+    let pageNumber = pageNumberFromMetadata;
+
+    if (!text && documentId) {
+      const fetched = await fetchChunkText(env, documentId, chunkIndex);
+      text = fetched.text;
+      pageNumber = pageNumber ?? fetched.pageNumber;
+    }
+
+    if (!text) {
+      continue;
+    }
+
+    chunks.push({
+      text,
+      documentId,
+      pageNumber,
+      chunkIndex,
+      filename: metadata.filename ?? null,
+      category: metadata.category ?? null,
+    });
+  }
+
+  return chunks;
 }
 
 async function callOpenAI(env, messages) {
@@ -191,6 +316,12 @@ export default {
       try {
         const body = await request.json();
         const result = await ingestDocumentText(documentManager, body);
+
+        try {
+          await upsertVectorsForDocument(env, result.id, result.filename, result.category ?? null);
+        } catch (vectorError) {
+          console.error('Vector upsert error (ignored):', vectorError);
+        }
 
         return new Response(JSON.stringify({
           ok: true,
@@ -529,7 +660,20 @@ export default {
           });
         }
 
-        const chunks = await searchChunks(env, question, 8);
+        let chunks = [];
+
+        try {
+          if (env.DOC_INDEX) {
+            chunks = await searchChunksVector(env, question, 8);
+          }
+
+          if (!chunks || chunks.length === 0) {
+            chunks = await searchChunksLike(env, question, 8);
+          }
+        } catch (searchError) {
+          console.error('Search failed in /ask, falling back to LIKE only', searchError);
+          chunks = await searchChunksLike(env, question, 8);
+        }
 
         let context = '';
         if (chunks.length === 0) {
