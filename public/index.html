@@ -340,6 +340,33 @@
             transform: translateY(-2px);
         }
 
+        .voice-input-btn {
+            padding: 12px 20px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .voice-input-btn:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        .voice-input-btn.recording {
+            background: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         .input-wrapper {
             display: flex;
             gap: 12px;
@@ -399,10 +426,11 @@
                 style="display: none;"
             />
             <button class="file-upload-btn" id="fileUploadBtn">📎 Attach File</button>
+            <button class="voice-input-btn" id="voiceInputBtn">🎤 Voice</button>
             <input
                 type="text"
                 id="messageInput"
-                placeholder="Type your message..."
+                placeholder="Type or speak your message..."
                 autocomplete="off"
             />
             <button id="sendButton">Send</button>
@@ -540,6 +568,99 @@
             return result;
         }
 
+        // Voice input functionality
+        let recognition = null;
+        let isRecording = false;
+
+        function initVoiceRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                console.warn('Speech recognition not supported');
+                return false;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isRecording = true;
+                document.getElementById('voiceInputBtn').classList.add('recording');
+                document.getElementById('voiceInputBtn').textContent = '🔴 Recording...';
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                document.getElementById('voiceInputBtn').classList.remove('recording');
+                document.getElementById('voiceInputBtn').textContent = '🎤 Voice';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                const messageInput = document.getElementById('messageInput');
+                if (finalTranscript) {
+                    messageInput.value += finalTranscript;
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                isRecording = false;
+                document.getElementById('voiceInputBtn').classList.remove('recording');
+                document.getElementById('voiceInputBtn').textContent = '🎤 Voice';
+
+                if (event.error === 'not-allowed') {
+                    alert('Microphone access denied. Please enable microphone permissions in your browser settings.');
+                } else if (event.error === 'no-speech') {
+                    // No speech detected, just stop quietly
+                } else {
+                    alert('Voice recognition error: ' + event.error);
+                }
+            };
+
+            return true;
+        }
+
+        function toggleVoiceInput() {
+            if (!recognition) {
+                if (!initVoiceRecognition()) {
+                    alert('Voice input is not supported in your browser. Please use Chrome, Edge, or Safari.');
+                    return;
+                }
+            }
+
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Failed to start recognition:', error);
+                    // Recognition might already be running, try to stop and restart
+                    recognition.stop();
+                    setTimeout(() => {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error('Failed to restart recognition:', e);
+                        }
+                    }, 100);
+                }
+            }
+        }
+
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             let message = input.value.trim();
@@ -556,22 +677,35 @@
                 // Upload file if one is selected
                 let uploadedDoc = null;
                 if (selectedFile) {
+                    loading.textContent = 'Uploading file...';
                     const uploadResult = await uploadFile(selectedFile);
                     uploadedDoc = uploadResult.document;
 
-                    // Process the document immediately
+                    // Process the document and wait for completion
+                    loading.textContent = 'Processing document...';
                     try {
-                        await fetch(`${API_BASE_URL}/api/documents/${uploadedDoc.id}/process`, {
+                        const processResponse = await fetch(`${API_BASE_URL}/api/documents/${uploadedDoc.id}/process`, {
                             method: 'POST'
                         });
+
+                        const processResult = await processResponse.json();
+
+                        if (!processResult.success) {
+                            throw new Error(processResult.error || 'Document processing failed');
+                        }
+
+                        // Add file info to message with document ID - document is now searchable!
+                        const fileInfo = `[I've uploaded and processed a file: "${selectedFile.name}" (Document ID: ${uploadedDoc.id}). The document now contains ${processResult.document.pageCount} pages of searchable content. Please use the search_documents tool to read its contents.]`;
+                        message = message ? `${message}\n\n${fileInfo}` : fileInfo;
+
                     } catch (processError) {
                         console.error('Failed to process document:', processError);
+                        // Tell the user and agent about the error
+                        const errorMsg = `[I tried to upload "${selectedFile.name}" but processing failed: ${processError.message}. The file might be corrupted, password-protected, or in an unsupported format.]`;
+                        message = message ? `${message}\n\n${errorMsg}` : errorMsg;
                     }
 
-                    // Add file info to message with document ID
-                    const fileInfo = `[I've uploaded a file: "${selectedFile.name}" (Document ID: ${uploadedDoc.id}). Please use the search_documents tool to read its contents if needed.]`;
-                    message = message ? `${message}\n\n${fileInfo}` : fileInfo;
-
+                    loading.textContent = 'Thinking...';
                     // Clear file selection
                     removeFile();
                 }
@@ -618,6 +752,7 @@
                 addMessage('assistant', 'Sorry, I encountered an error. Please try again.', 'System');
             } finally {
                 loading.classList.remove('active');
+                loading.textContent = 'Thinking...';
                 sendButton.disabled = false;
             }
         }
@@ -775,6 +910,9 @@
             document.getElementById('fileInput').click();
         });
         document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+
+        // Voice input event listener
+        document.getElementById('voiceInputBtn').addEventListener('click', toggleVoiceInput);
 
         // Initialize
         loadPersonas();
