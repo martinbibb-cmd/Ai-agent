@@ -1,18 +1,20 @@
-// Fallback model to use if env.OPENAI_MODEL is not set.
-// Should match what you use elsewhere in the Worker.
+// src/documents/pdfExtraction.js
+
+// Default model used for PDF text extraction if env.OPENAI_MODEL is not set.
+// This should be a Responses-capable model (4.1 / 4o / mini variant).
 const FALLBACK_MODEL = 'gpt-4.1-mini';
 
 /**
- * Extract readable plain text from a PDF using OpenAI.
+ * Extract readable plain text from a PDF using OpenAI Files + Responses APIs.
  *
- * Flow:
- *   1. Upload the PDF to the Files API with purpose "assistants"
- *   2. Call the Responses API, attaching that file as an input_file
- *   3. Ask the model to output ALL text in reading order as plain UTF-8 text
+ * Steps:
+ *   1. Upload the PDF to the Files API with purpose "assistants".
+ *   2. Call the Responses API with an input_text + input_file, asking it to
+ *      output ALL text as plain UTF-8 (no summary, no markdown).
  *
- * @param {any} env      Cloudflare Worker env (must contain OPENAI_API_KEY)
- * @param {File|Blob} file  The uploaded PDF file (from formData.get('file'))
- * @param {string} filename  Original filename (for logging only)
+ * @param {any} env       Cloudflare Worker env (must contain OPENAI_API_KEY)
+ * @param {File|Blob} file   The uploaded PDF file (from formData.get('file'))
+ * @param {string} filename   Original filename (for logging only)
  * @returns {Promise<string>} Extracted plain text
  */
 export async function extractTextFromPdfWithOpenAI(env, file, filename) {
@@ -21,16 +23,16 @@ export async function extractTextFromPdfWithOpenAI(env, file, filename) {
     throw new Error('OPENAI_API_KEY is not configured');
   }
 
-  // 1️⃣ Upload the PDF to OpenAI Files
+  // 1️⃣ Upload the PDF to OpenAI Files API
   const uploadForm = new FormData();
   uploadForm.append('file', file, filename);
-  // "assistants" is a valid purpose for files that will be used with models/tools
+  // "assistants" is a supported purpose for files used with models/tools.
   uploadForm.append('purpose', 'assistants');
 
   const uploadRes = await fetch('https://api.openai.com/v1/files', {
     method: 'POST',
     headers: {
-      // DO NOT set Content-Type manually – let FormData handle it
+      // Important: let FormData set Content-Type with the boundary.
       Authorization: `Bearer ${apiKey}`,
     },
     body: uploadForm,
@@ -67,7 +69,7 @@ export async function extractTextFromPdfWithOpenAI(env, file, filename) {
               text:
                 'You are a PDF text extractor. ' +
                 'Extract ALL readable text from this PDF in logical reading order. ' +
-                'Include headings, tables (as text), and labels. ' +
+                'Include headings, labels and table contents (as text). ' +
                 'Output PLAIN UTF-8 text only, no explanations, no markdown.',
             },
             {
@@ -89,9 +91,7 @@ export async function extractTextFromPdfWithOpenAI(env, file, filename) {
 
   const respJson = await responseRes.json();
 
-  // 3️⃣ Pull out the extracted text.
-  // The Responses API usually gives us `output_text`, but we also fall back
-  // to scanning the first output message for text blocks.
+  // 3️⃣ Pull out the extracted text from the Responses payload
   let extracted = '';
 
   if (typeof respJson.output_text === 'string') {
@@ -128,3 +128,4 @@ export async function extractTextFromPdfWithOpenAI(env, file, filename) {
 
   return extracted;
 }
+
