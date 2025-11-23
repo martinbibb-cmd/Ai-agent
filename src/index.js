@@ -3,6 +3,7 @@ import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
+import { extractTextFromFile, splitIntoChunks } from './documents/textProcessing.js';
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
@@ -65,6 +66,49 @@ IMPORTANT INSTRUCTIONS:
 7. Use UK metric units in all calculations and recommendations
 
 You have access to specialized tools - use them when appropriate to provide the best assistance.`;
+
+const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+
+async function searchChunks(env, query, limit = 8) {
+  const db = env.DB;
+  const stmt = `
+    SELECT dc.chunk_text AS text, d.filename AS document_name
+    FROM document_chunks_fts f
+    JOIN document_chunks dc ON dc.id = f.rowid
+    JOIN documents d ON d.id = dc.document_id
+    WHERE document_chunks_fts MATCH ?
+    LIMIT ?;
+  `;
+
+  const { results } = await db.prepare(stmt).bind(query, limit).all();
+  return results || [];
+}
+
+async function callOpenAI(env, messages) {
+  const apiKey = env.OPENAI_API_KEY;
+  const model = env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.1
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI error: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -173,9 +217,14 @@ export default {
           uploadedBy: 'user'
         });
 
+        const fullText = await extractTextFromFile(file);
+        const chunks = splitIntoChunks(fullText);
+        const chunkResult = await documentManager.saveDocumentChunks(result.id, chunks);
+
         return new Response(JSON.stringify({
           success: true,
-          document: result
+          document: result,
+          chunksInserted: chunkResult.inserted
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -400,6 +449,80 @@ export default {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
+      }
+    }
+
+    // Question answering endpoint using document chunks
+    if (url.pathname === '/ask' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const question = (body?.question || '').toString().trim();
+
+        if (!question) {
+          return new Response(JSON.stringify({ error: "Missing 'question'" }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (!env.OPENAI_API_KEY) {
+          return new Response(JSON.stringify({ error: 'OPENAI_API_KEY is not configured' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const chunks = await searchChunks(env, question, 8);
+
+        let context = '';
+        for (const c of chunks) {
+          context += `[Document: ${c.document_name}]
+${c.text}
+
+`;
+        }
+
+        const messages = [
+          {
+            role: 'system',
+            content:
+              'You are a precise technical assistant answering questions from uploaded manuals and guides. ' +
+              "Use ONLY the provided document excerpts. If the answer is not clearly contained in them, say you don't know.",
+          },
+          {
+            role: 'system',
+            content: `Relevant document excerpts:\n\n${context || '[no relevant excerpts found]'}`,
+          },
+          {
+            role: 'user',
+            content: question,
+          },
+        ];
+
+        const answer = await callOpenAI(env, messages);
+
+        return new Response(
+          JSON.stringify({
+            answer,
+            chunksUsed: chunks,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
+      } catch (error) {
+        console.error('Ask endpoint error:', error);
+        return new Response(
+          JSON.stringify({
+            error: 'Failed to answer question',
+            details: error.message,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
       }
     }
 
