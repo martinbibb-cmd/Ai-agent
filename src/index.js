@@ -646,6 +646,50 @@ export default {
       });
     }
 
+    // Database diagnostic endpoint
+    if (url.pathname === '/api/diagnostics') {
+      const diagnostics = {
+        timestamp: new Date().toISOString(),
+        database: {
+          available: !!env.DB,
+          initialized: !!documentManager
+        },
+        storage: {
+          r2_available: !!env.DOCUMENTS
+        },
+        environment: {
+          has_anthropic_key: !!env.ANTHROPIC_API_KEY,
+          has_openai_key: !!env.OPENAI_API_KEY
+        }
+      };
+
+      // If documentManager exists, get detailed status
+      if (documentManager) {
+        try {
+          const ftsHealth = await documentManager.checkFTSHealth();
+          diagnostics.fts = ftsHealth;
+
+          // Try to count documents
+          const docCount = await env.DB.prepare('SELECT COUNT(*) as count FROM documents').first();
+          diagnostics.database.document_count = docCount?.count || 0;
+
+          // Try to count pages
+          const pageCount = await env.DB.prepare('SELECT COUNT(*) as count FROM document_pages').first();
+          diagnostics.database.page_count = pageCount?.count || 0;
+
+        } catch (error) {
+          diagnostics.database.error = error.message;
+        }
+      }
+
+      return new Response(JSON.stringify(diagnostics, null, 2), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
     // API Info endpoint
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({

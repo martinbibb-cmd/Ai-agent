@@ -294,5 +294,23 @@ export const tools = [
       },
       required: ["document_id"]
     }
+  },
+  {
+    name: "fetch_json_data",
+    description: "Fetch and parse JSON data from a URL (works with Google Drive, Dropbox, or any public URL). Use this to access external data sources or when document upload isn't working.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "URL to fetch JSON from. For Google Drive: use the direct download link (drive.google.com/uc?export=download&id=FILE_ID)"
+        },
+        description: {
+          type: "string",
+          description: "Optional description of what data this URL contains"
+        }
+      },
+      required: ["url"]
+    }
   }
 ];

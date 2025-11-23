@@ -381,6 +381,59 @@ export const toolHandlers = {
         error: `Failed to delete document: ${error.message}`
       };
     }
+  },
+
+  fetch_json_data: async (input) => {
+    const { url, description } = input;
+
+    try {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+
+      // Check if it's JSON
+      if (!contentType || !contentType.includes('application/json')) {
+        // Try to parse as JSON anyway - some servers don't set correct content-type
+        const text = await response.text();
+        try {
+          const data = JSON.parse(text);
+          return {
+            success: true,
+            data,
+            source: url,
+            description: description || 'External JSON data',
+            note: 'Data fetched successfully (content-type was not set correctly but parsed as JSON)'
+          };
+        } catch (parseError) {
+          return {
+            error: `URL did not return valid JSON. Content-Type: ${contentType}, Parse error: ${parseError.message}`,
+            preview: text.substring(0, 200)
+          };
+        }
+      }
+
+      const data = await response.json();
+
+      return {
+        success: true,
+        data,
+        source: url,
+        description: description || 'External JSON data',
+        size: JSON.stringify(data).length,
+        type: Array.isArray(data) ? 'array' : typeof data
+      };
+
+    } catch (error) {
+      return {
+        error: `Failed to fetch JSON: ${error.message}`,
+        url,
+        suggestion: 'Make sure the URL is publicly accessible and returns valid JSON. For Google Drive, use: https://drive.google.com/uc?export=download&id=YOUR_FILE_ID'
+      };
+    }
   }
 };
 
