@@ -404,6 +404,56 @@ export default {
       }
     }
 
+    // NEW: Force FTS initialization endpoint (fixes missing FTS table)
+    if (url.pathname === '/api/documents/fts/init' && request.method === 'POST') {
+      if (!documentManager) {
+        return new Response(JSON.stringify({
+          error: 'Document storage not configured'
+        }), {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        console.log('Force initializing FTS...');
+
+        // Drop existing FTS table if it exists (to fix corruption)
+        try {
+          await env.DB.prepare('DROP TABLE IF EXISTS documents_fts').run();
+          await env.DB.prepare('DROP TRIGGER IF EXISTS documents_fts_insert').run();
+          await env.DB.prepare('DROP TRIGGER IF EXISTS documents_fts_delete').run();
+        } catch (dropError) {
+          console.log('Drop tables/triggers (expected if not exist):', dropError.message);
+        }
+
+        // Initialize FTS fresh
+        await documentManager.initializeFTS();
+
+        // Rebuild from existing data
+        const result = await documentManager.rebuildFTSIndex();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'FTS initialized and rebuilt successfully! You can now search your 9 documents.',
+          details: result
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('FTS init error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to initialize FTS',
+          details: error.message,
+          stack: error.stack
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Agent endpoint with tool calling
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
