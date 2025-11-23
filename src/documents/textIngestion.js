@@ -47,3 +47,24 @@ export async function ingestDocumentTextWithEnv(env, body = {}) {
   const manager = new DocumentManager(env.DOCUMENTS, env.DB);
   return ingestDocumentText(manager, body);
 }
+
+export async function ingestRawTextAsDocument(env, options = {}, manager) {
+  const documentManager = manager || new DocumentManager(env.DOCUMENTS, env.DB);
+
+  const text = (options.text || '').toString();
+  if (!text.trim()) {
+    throw new Error('Text content is required');
+  }
+
+  const tags = Array.isArray(options.tags) ? options.tags : [];
+
+  return documentManager.ingestTextDocument({
+    filename: options.filename || `text-upload-${Date.now()}.txt`,
+    originalFilename: options.originalFilename || options.filename,
+    contentType: options.contentType || 'text/plain',
+    uploadedBy: options.uploadedBy || 'user',
+    category: options.category || 'general',
+    tags,
+    text,
+  });
+}
