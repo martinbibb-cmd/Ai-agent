@@ -72,6 +72,9 @@ export class DocumentManager {
         await this.db.prepare(statement).run();
       }
 
+      // Ensure columns added in newer releases exist on older databases
+      await this.ensureUpToDateSchema();
+
       console.log('Document storage schema initialized successfully');
 
       // Try to initialize FTS - this might fail if already exists, which is OK
@@ -98,6 +101,40 @@ export class DocumentManager {
       console.error('Failed to initialize document schema:', error);
       console.error('Error details:', error.message, error.stack);
       throw new Error(`Document storage initialization failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Add any missing columns introduced in newer releases
+   * This keeps older databases compatible without manual migrations
+   */
+  async ensureUpToDateSchema() {
+    const requiredColumns = {
+      format: 'TEXT',
+      language: 'TEXT',
+      parsed_metadata: 'TEXT',
+      parsed_structure: 'TEXT',
+      parser_version: 'TEXT',
+      parse_timestamp: 'TEXT',
+      word_count: 'INTEGER',
+      character_count: 'INTEGER'
+    };
+
+    try {
+      const existing = await this.db.prepare('PRAGMA table_info(documents)').all();
+      const existingColumns = new Set((existing.results || []).map((col) => col.name));
+
+      for (const [column, type] of Object.entries(requiredColumns)) {
+        if (!existingColumns.has(column)) {
+          console.log(`Adding missing column to documents: ${column} (${type})`);
+          await this.db
+            .prepare(`ALTER TABLE documents ADD COLUMN ${column} ${type}`)
+            .run();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to ensure up-to-date schema:', error);
+      throw new Error(`Schema migration failed: ${error.message}`);
     }
   }
 
