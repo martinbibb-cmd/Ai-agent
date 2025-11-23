@@ -5,7 +5,7 @@
  */
 
 import { BaseParser } from './base.js';
-import { getDocumentProxy } from 'unpdf';
+import { getDocumentProxy, extractText } from 'unpdf';
 
 export class PDFParser extends BaseParser {
   constructor(options = {}) {
@@ -20,42 +20,52 @@ export class PDFParser extends BaseParser {
    */
   async parse(buffer, fileInfo = {}) {
     try {
+      console.log(`[PDFParser] Starting parse for ${fileInfo.name}, size: ${buffer.byteLength} bytes`);
+
       // Get PDF document proxy using unpdf
+      console.log('[PDFParser] Creating document proxy...');
       const pdf = await getDocumentProxy(new Uint8Array(buffer));
+      console.log(`[PDFParser] Document proxy created, numPages: ${pdf.numPages}`);
 
       // Extract metadata
-      const pdfMetadata = await pdf.getMetadata().catch(() => ({ info: {} }));
+      console.log('[PDFParser] Extracting metadata...');
+      const pdfMetadata = await pdf.getMetadata().catch((err) => {
+        console.warn('[PDFParser] Metadata extraction failed:', err.message);
+        return { info: {} };
+      });
       const metadata = this.extractPDFMetadata(pdfMetadata.info, fileInfo);
+      console.log('[PDFParser] Metadata extracted successfully');
 
-      // Extract text from all pages
+      // Extract all text using unpdf's helper function
+      console.log('[PDFParser] Extracting text from all pages...');
+      const { totalPages, text: fullText, pages: rawPages } = await extractText(pdf, {
+        mergePages: false // Get pages separately
+      });
+      console.log(`[PDFParser] Text extracted: ${totalPages} pages, ${rawPages.length} page texts`);
+
+      // Process pages into our format
       const pages = [];
-      const numPages = pdf.numPages;
-
-      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-
-        // Combine text items into readable text
-        const pageText = textContent.items
-          .map(item => item.str || '')
-          .join(' ');
-
+      for (let i = 0; i < rawPages.length; i++) {
+        const pageText = rawPages[i];
         const cleanText = this.sanitizeText(pageText);
 
         if (cleanText && cleanText.trim().length > 0) {
-          pages.push(this.createPage(pageNum, cleanText));
+          pages.push(this.createPage(i + 1, cleanText));
         }
       }
+      console.log(`[PDFParser] Processed ${pages.length} pages with content`);
 
-      // Create full text and structure
-      const fullText = pages.map(p => p.content).join('\n\n');
-      const structure = this.createStructure(pages, fullText);
+      // Create full text from processed pages
+      const processedFullText = pages.map(p => p.content).join('\n\n');
+      const structure = this.createStructure(pages, processedFullText);
 
       // Create chunks for RAG/search
-      const chunks = this.chunkText(fullText);
+      const chunks = this.chunkText(processedFullText);
+      console.log(`[PDFParser] Created ${chunks.length} text chunks`);
 
       // Cleanup
       await pdf.destroy();
+      console.log('[PDFParser] Parse completed successfully');
 
       return {
         format: 'pdf',
@@ -66,18 +76,25 @@ export class PDFParser extends BaseParser {
           content: 'PDF processed but no text found (might be image-based)',
           metadata: { headers: [], wordCount: 0 }
         }],
-        fullText: fullText || 'PDF processed but no text found (might be image-based)',
+        fullText: processedFullText || 'PDF processed but no text found (might be image-based)',
         chunks,
         parseTimestamp: new Date().toISOString(),
         parser: {
           name: 'PDFParser',
-          version: '3.0',
-          method: 'unpdf-extraction'
+          version: '3.1',
+          method: 'unpdf-extraction',
+          totalPages
         }
       };
 
     } catch (error) {
-      console.error('PDF parsing error:', error);
+      console.error('[PDFParser] PDF parsing error:', error);
+      console.error('[PDFParser] Error stack:', error.stack);
+      console.error('[PDFParser] Error details:', {
+        message: error.message,
+        name: error.name,
+        cause: error.cause
+      });
 
       // Return safe fallback with error information
       return {
@@ -103,7 +120,8 @@ export class PDFParser extends BaseParser {
         parseTimestamp: new Date().toISOString(),
         error: {
           message: error.message,
-          type: 'parsing_error'
+          type: 'parsing_error',
+          stack: error.stack
         }
       };
     }
