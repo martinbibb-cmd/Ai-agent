@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk';
-import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
@@ -7,19 +6,10 @@ import { ingestDocumentText, ingestRawTextAsDocument } from './documents/textIng
 import { extractTextFromPdfWithOpenAI } from './documents/pdfExtraction.js';
 import { upsertVectorsForDocument, searchChunksSimple, searchChunksVector } from './documents/search.js';
 
-// Voice mapping for TTS
-const VOICE_MAPPING = {
-  'none': 'echo',
-  'janet': 'shimmer',
-  'rocky': 'alloy',
-  'heart_of_gold': 'verse',
-  'marvin': 'botanica',
-  'sonny': 'lumina',
-  'kiss': 'echo',
-  'r2d2': 'fable'
-};
+// Default TTS voice
+const DEFAULT_TTS_VOICE = 'shimmer';
 
-// Core system prompt shared across all personas
+// Core system prompt
 const CORE_SYSTEM_PROMPT = `You are an advanced AI assistant specialized in helping with surveys and boiler/heating system inquiries for UK homes.
 
 YOUR CAPABILITIES:
@@ -35,6 +25,12 @@ YOUR CAPABILITIES:
 - Answer questions based on uploaded PDF documents
 - Reference specific pages and sections from documents
 - List available documents and their contents
+
+**Image Analysis:**
+- Analyze images of boilers, heating systems, error codes, or installation setups
+- Identify boiler models and components from photos
+- Review installation diagrams and schematics
+- Examine error displays and diagnostic screens
 
 **Boiler & Heating Expertise (UK-focused):**
 - Recommend appropriate boilers based on home size, fuel type, and requirements
@@ -64,11 +60,12 @@ YOUR CAPABILITIES:
 IMPORTANT INSTRUCTIONS:
 1. Use the available tools to provide accurate, data-driven recommendations
 2. Always ask clarifying questions when you need more information
-3. Explain technical concepts in ways appropriate to your persona
+3. Explain technical concepts clearly and concisely
 4. When recommending boilers, consider home size (in m²), budget, and efficiency needs
 5. For troubleshooting, assess safety first - always recommend Gas Safe registered engineer for gas/safety issues
 6. Be thorough but conversational
 7. Use UK metric units in all calculations and recommendations
+8. When users send images, analyze them carefully and provide detailed observations
 
 You have access to specialized tools - use them when appropriate to provide the best assistance.`;
 
@@ -140,15 +137,7 @@ export default {
       ? new DocumentManager(env.DOCUMENTS, env.DB)
       : null;
 
-    // Serve personas.json
-    if (url.pathname === '/data/personas.json') {
-      return new Response(JSON.stringify(personas), {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-        },
-      });
-    }
+    // Personas removed - endpoint no longer available
 
     // Direct text ingestion endpoint
     if (url.pathname === '/documents/text' && request.method === 'POST') {
@@ -647,12 +636,12 @@ export default {
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { personaId, personaSystem, voiceHint, message, conversationHistory = [] } = body;
+        const { message, images = [], conversationHistory = [] } = body;
 
         // Validate required fields
-        if (!personaId || !personaSystem || !message) {
+        if (!message || (typeof message !== 'string' && !Array.isArray(message))) {
           return new Response(JSON.stringify({
-            error: 'Missing required fields: personaId, personaSystem, and message are required'
+            error: 'Missing required field: message is required'
           }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -664,27 +653,50 @@ export default {
           apiKey: env.ANTHROPIC_API_KEY,
         });
 
-        // Combine core system prompt with persona system prompt WITH PROMPT CACHING
+        // Use core system prompt WITH PROMPT CACHING
         // Using cache_control to cache the large system prompt reduces latency significantly
         const systemPromptBlocks = [
           {
             type: 'text',
             text: CORE_SYSTEM_PROMPT,
             cache_control: { type: 'ephemeral' }
-          },
-          {
-            type: 'text',
-            text: `---\n\nPERSONALITY AND COMMUNICATION STYLE:\n${personaSystem}`,
-            cache_control: { type: 'ephemeral' }
           }
         ];
+
+        // Build message content - support text + images
+        let messageContent;
+        if (images && images.length > 0) {
+          // Multi-modal message with images
+          messageContent = [];
+
+          // Add images first
+          images.forEach(img => {
+            messageContent.push({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: img.media_type || 'image/jpeg',
+                data: img.data,
+              }
+            });
+          });
+
+          // Add text
+          messageContent.push({
+            type: 'text',
+            text: message
+          });
+        } else {
+          // Text-only message
+          messageContent = message;
+        }
 
         // Build messages array from conversation history
         let messages = [
           ...conversationHistory,
           {
             role: 'user',
-            content: message,
+            content: messageContent,
           },
         ];
 
@@ -830,9 +842,7 @@ export default {
             // Send completion signal with metadata
             await writer.write(encoder.encode(`data: ${JSON.stringify({
               type: 'done',
-              personaId: personaId,
-              voiceHint: voiceHint,
-              ttsVoice: VOICE_MAPPING[personaId] || 'shimmer',
+              ttsVoice: DEFAULT_TTS_VOICE,
               toolsUsed: toolResults.length > 0,
               usage: finalResponse ? {
                 inputTokens: finalResponse.usage.input_tokens,
@@ -874,9 +884,9 @@ export default {
       }
     }
 
-    // Voice mapping endpoint (for reference)
+    // Voice endpoint
     if (url.pathname === '/voices') {
-      return new Response(JSON.stringify(VOICE_MAPPING), {
+      return new Response(JSON.stringify({ voice: DEFAULT_TTS_VOICE }), {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
@@ -888,7 +898,7 @@ export default {
     if (url.pathname === '/api/tts' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { text, voice = 'shimmer', personaId } = body;
+        const { text, voice = DEFAULT_TTS_VOICE } = body;
 
         if (!text) {
           return new Response(JSON.stringify({
@@ -899,8 +909,7 @@ export default {
           });
         }
 
-        // Map persona to voice if personaId is provided
-        const selectedVoice = personaId ? (VOICE_MAPPING[personaId] || voice) : voice;
+        const selectedVoice = voice;
 
         // Call OpenAI TTS API
         const openaiResponse = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -965,7 +974,6 @@ export default {
       return new Response(JSON.stringify({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        personas: personas.length,
         tools: tools.length,
       }), {
         headers: {
@@ -979,9 +987,9 @@ export default {
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
-        version: '2.0',
+        version: '3.0',
         capabilities: [
-          'Multi-persona support',
+          'Image analysis and recognition',
           'Survey creation and management',
           'Boiler recommendations',
           'Heating calculations',
@@ -993,9 +1001,8 @@ export default {
         endpoints: {
           '/': 'GET - Chat Interface',
           '/documents.html': 'GET - Document Manager',
-          '/data/personas.json': 'GET - Get available personas',
           '/documents/text': 'POST - Ingest raw text content as a document',
-          '/agent': 'POST - Send message to agent (with tool calling)',
+          '/agent': 'POST - Send message to agent (with tool calling and images)',
           '/api/documents/upload': 'POST - Upload PDF document',
           '/api/documents': 'GET - List documents',
           '/api/documents/{id}': 'DELETE - Delete document',
@@ -1004,7 +1011,7 @@ export default {
           '/api/documents/fts/health': 'GET - Check FTS index health',
           '/api/documents/fts/migrate': 'POST - Rebuild FTS index',
           '/api/tts': 'POST - Generate AI speech from text',
-          '/voices': 'GET - Get voice mapping',
+          '/voices': 'GET - Get default voice',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
         },
