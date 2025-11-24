@@ -9,6 +9,7 @@ import { upsertVectorsForDocument, searchChunksSimple, searchChunksVector } from
 
 // Voice mapping for TTS
 const VOICE_MAPPING = {
+  'none': 'echo',
   'janet': 'shimmer',
   'rocky': 'alloy',
   'heart_of_gold': 'verse',
