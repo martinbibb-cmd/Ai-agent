@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Status - AI Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .header-nav {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .nav-btn {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .content {
+            padding: 32px;
+        }
+
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+
+        .status-card.success {
+            border-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .status-card.error {
+            border-color: #ef4444;
+            background: #fef2f2;
+        }
+
+        .status-card.warning {
+            border-color: #f59e0b;
+            background: #fffbeb;
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .status-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-icon {
+            font-size: 24px;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .badge-error {
+            background: #ef4444;
+            color: white;
+        }
+
+        .badge-warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .status-details {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 12px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .detail-value {
+            font-family: 'Courier New', monospace;
+            color: #666;
+        }
+
+        .error-message {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #ef4444;
+            word-break: break-all;
+        }
+
+        .overall-status {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 32px;
+            text-align: center;
+            border-radius: 12px;
+            margin-bottom: 32px;
+        }
+
+        .overall-status h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .overall-status p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .refresh-btn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 24px;
+        }
+
+        .refresh-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .refresh-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #888;
+            font-style: italic;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-right: 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .timestamp {
+            text-align: center;
+            color: #888;
+            font-size: 13px;
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-nav">
+                <a href="/" class="nav-btn">💬 Chat</a>
+                <a href="/documents.html" class="nav-btn">📄 Documents</a>
+            </div>
+            <h1>🔌 API Status</h1>
+            <p>Monitor the status of all configured AI provider APIs</p>
+        </div>
+
+        <div class="content">
+            <button class="refresh-btn" onclick="checkStatus()" id="refreshBtn">🔄 Refresh Status</button>
+
+            <div id="loadingIndicator" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <span>Checking API status...</span>
+            </div>
+
+            <div id="statusContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = window.location.origin;
+
+        async function checkStatus() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const statusContainer = document.getElementById('statusContainer');
+
+            refreshBtn.disabled = true;
+            loadingIndicator.style.display = 'flex';
+            statusContainer.innerHTML = '';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/status`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayStatus(data);
+            } catch (error) {
+                console.error('Failed to check API status:', error);
+                statusContainer.innerHTML = `
+                    <div class="status-card error">
+                        <div class="status-header">
+                            <div class="status-title">
+                                <span class="status-icon">❌</span>
+                                Error
+                            </div>
+                        </div>
+                        <div class="error-message">
+                            Failed to check API status: ${error.message}
+                        </div>
+                    </div>
+                `;
+            } finally {
+                refreshBtn.disabled = false;
+                loadingIndicator.style.display = 'none';
+            }
+        }
+
+        function displayStatus(data) {
+            const statusContainer = document.getElementById('statusContainer');
+
+            // Overall status
+            const overallStatus = data.overall.status;
+            let overallColor = '#10b981';
+            let overallText = 'All APIs Working';
+            let overallIcon = '✅';
+
+            if (overallStatus === 'partial') {
+                overallColor = '#f59e0b';
+                overallText = 'Some APIs Working';
+                overallIcon = '⚠️';
+            } else if (overallStatus === 'none_working') {
+                overallColor = '#ef4444';
+                overallText = 'No APIs Working';
+                overallIcon = '❌';
+            }
+
+            statusContainer.innerHTML = `
+                <div class="overall-status" style="background: ${overallColor};">
+                    <h2>${overallIcon} ${overallText}</h2>
+                    <p>${data.overall.workingCount} of ${data.overall.totalCount} APIs configured and working</p>
+                </div>
+            `;
+
+            // Individual API statuses
+            const apiOrder = ['claude', 'openai', 'gemini'];
+            const apiNames = {
+                claude: 'Claude (Anthropic)',
+                openai: 'GPT (OpenAI)',
+                gemini: 'Gemini (Google)'
+            };
+            const apiIcons = {
+                claude: '🤖',
+                openai: '🧠',
+                gemini: '💎'
+            };
+
+            apiOrder.forEach(apiKey => {
+                const api = data.apis[apiKey];
+                if (!api) return;
+
+                let cardClass = 'status-card';
+                let badgeClass = 'status-badge';
+                let statusText = 'Unknown';
+                let statusIcon = '❓';
+
+                if (api.working) {
+                    cardClass += ' success';
+                    badgeClass += ' badge-success';
+                    statusText = 'Working';
+                    statusIcon = '✅';
+                } else if (api.configured) {
+                    cardClass += ' error';
+                    badgeClass += ' badge-error';
+                    statusText = 'Error';
+                    statusIcon = '❌';
+                } else {
+                    cardClass += ' warning';
+                    badgeClass += ' badge-warning';
+                    statusText = 'Not Configured';
+                    statusIcon = '⚠️';
+                }
+
+                let detailsHtml = `
+                    <div class="status-details">
+                        <span class="detail-label">Configured:</span>
+                        <span class="detail-value">${api.configured ? 'Yes' : 'No'}</span>
+                        <span class="detail-label">Working:</span>
+                        <span class="detail-value">${api.working ? 'Yes' : 'No'}</span>
+                `;
+
+                if (api.model) {
+                    detailsHtml += `
+                        <span class="detail-label">Test Model:</span>
+                        <span class="detail-value">${api.model}</span>
+                    `;
+                }
+
+                detailsHtml += '</div>';
+
+                if (api.error) {
+                    detailsHtml += `
+                        <div class="error-message">${api.error}</div>
+                    `;
+                }
+
+                statusContainer.innerHTML += `
+                    <div class="${cardClass}">
+                        <div class="status-header">
+                            <div class="status-title">
+                                <span class="status-icon">${apiIcons[apiKey]}</span>
+                                ${apiNames[apiKey]}
+                            </div>
+                            <span class="${badgeClass}">${statusIcon} ${statusText}</span>
+                        </div>
+                        ${detailsHtml}
+                    </div>
+                `;
+            });
+
+            // Timestamp
+            statusContainer.innerHTML += `
+                <div class="timestamp">
+                    Last checked: ${new Date(data.timestamp).toLocaleString()}
+                </div>
+            `;
+        }
+
+        // Check status on page load
+        checkStatus();
+    </script>
+</body>
+</html>

@@ -665,6 +665,14 @@ export default {
           'gpt-3.5-turbo'
         ];
 
+        const geminiModels = [
+          'gemini-2.0-flash-exp',
+          'gemini-exp-1206',
+          'gemini-2.0-flash-thinking-exp-01-21',
+          'gemini-1.5-pro',
+          'gemini-1.5-flash'
+        ];
+
         let selectedModel = model;
         let provider = 'claude';
 
@@ -672,6 +680,8 @@ export default {
           provider = 'claude';
         } else if (openaiModels.includes(model)) {
           provider = 'openai';
+        } else if (geminiModels.includes(model)) {
+          provider = 'gemini';
         } else {
           // Default to Claude Sonnet 4.5
           selectedModel = 'claude-sonnet-4-5-20250929';
@@ -681,6 +691,8 @@ export default {
         // Route to appropriate provider
         if (provider === 'openai') {
           return await handleOpenAIRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
+        } else if (provider === 'gemini') {
+          return await handleGeminiRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
         } else {
           return await handleClaudeRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
         }
@@ -900,6 +912,138 @@ export default {
 
         } catch (error) {
           console.error('Streaming error:', error);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+          await writer.close();
+        }
+      })();
+
+      // Return streaming response
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Helper function for Gemini requests
+    async function handleGeminiRequest(env, message, images, conversationHistory, selectedModel, corsHeaders) {
+      // Build messages array for Gemini
+      let geminiMessages = [];
+
+      // Add conversation history
+      conversationHistory.forEach(msg => {
+        geminiMessages.push({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }]
+        });
+      });
+
+      // Build current message content - Gemini format
+      let userParts = [];
+
+      // Add images first
+      if (images && images.length > 0) {
+        images.forEach(img => {
+          userParts.push({
+            inline_data: {
+              mime_type: img.media_type,
+              data: img.data
+            }
+          });
+        });
+      }
+
+      // Add text
+      userParts.push({
+        text: message || 'Analyze these images'
+      });
+
+      geminiMessages.push({
+        role: 'user',
+        parts: userParts
+      });
+
+      // Create a streaming response
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Start async processing
+      (async () => {
+        try {
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:streamGenerateContent?key=${env.GEMINI_API_KEY}`;
+
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: geminiMessages,
+              systemInstruction: {
+                parts: [{ text: CORE_SYSTEM_PROMPT }]
+              },
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 4096,
+              }
+            })
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let fullResponse = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+
+            // Parse Gemini's streaming response format
+            // Gemini returns JSON objects separated by newlines
+            const lines = chunk.split('\n').filter(line => line.trim());
+
+            for (const line of lines) {
+              try {
+                const parsed = JSON.parse(line);
+
+                if (parsed.candidates && parsed.candidates[0]?.content?.parts) {
+                  const parts = parsed.candidates[0].content.parts;
+
+                  for (const part of parts) {
+                    if (part.text) {
+                      fullResponse += part.text;
+                      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: part.text })}\n\n`));
+                    }
+                  }
+                }
+              } catch (e) {
+                // Skip parse errors for incomplete chunks
+                console.error('Parse error:', e);
+              }
+            }
+          }
+
+          // Send completion signal
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            ttsVoice: DEFAULT_TTS_VOICE,
+            toolsUsed: false
+          })}\n\n`));
+
+          await writer.close();
+
+        } catch (error) {
+          console.error('Gemini streaming error:', error);
           await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
           await writer.close();
         }
@@ -1142,14 +1286,172 @@ export default {
       });
     }
 
+    // API Status endpoint - test all API keys
+    if (url.pathname === '/api/status' && request.method === 'GET') {
+      const results = {
+        timestamp: new Date().toISOString(),
+        apis: {}
+      };
+
+      // Test Claude API
+      if (env.ANTHROPIC_API_KEY) {
+        try {
+          const anthropic = new Anthropic({
+            apiKey: env.ANTHROPIC_API_KEY,
+          });
+
+          const response = await anthropic.messages.create({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 10,
+            messages: [{ role: 'user', content: 'Hi' }]
+          });
+
+          results.apis.claude = {
+            status: 'success',
+            configured: true,
+            working: true,
+            model: 'claude-3-haiku-20240307'
+          };
+        } catch (error) {
+          results.apis.claude = {
+            status: 'error',
+            configured: true,
+            working: false,
+            error: error.message
+          };
+        }
+      } else {
+        results.apis.claude = {
+          status: 'not_configured',
+          configured: false,
+          working: false
+        };
+      }
+
+      // Test OpenAI API
+      if (env.OPENAI_API_KEY) {
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'gpt-3.5-turbo',
+              messages: [{ role: 'user', content: 'Hi' }],
+              max_tokens: 10
+            })
+          });
+
+          if (response.ok) {
+            results.apis.openai = {
+              status: 'success',
+              configured: true,
+              working: true,
+              model: 'gpt-3.5-turbo'
+            };
+          } else {
+            const errorData = await response.text();
+            results.apis.openai = {
+              status: 'error',
+              configured: true,
+              working: false,
+              error: `HTTP ${response.status}: ${errorData}`
+            };
+          }
+        } catch (error) {
+          results.apis.openai = {
+            status: 'error',
+            configured: true,
+            working: false,
+            error: error.message
+          };
+        }
+      } else {
+        results.apis.openai = {
+          status: 'not_configured',
+          configured: false,
+          working: false
+        };
+      }
+
+      // Test Gemini API
+      if (env.GEMINI_API_KEY) {
+        try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${env.GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{ text: 'Hi' }]
+              }],
+              generationConfig: {
+                maxOutputTokens: 10
+              }
+            })
+          });
+
+          if (response.ok) {
+            results.apis.gemini = {
+              status: 'success',
+              configured: true,
+              working: true,
+              model: 'gemini-1.5-flash'
+            };
+          } else {
+            const errorData = await response.text();
+            results.apis.gemini = {
+              status: 'error',
+              configured: true,
+              working: false,
+              error: `HTTP ${response.status}: ${errorData}`
+            };
+          }
+        } catch (error) {
+          results.apis.gemini = {
+            status: 'error',
+            configured: true,
+            working: false,
+            error: error.message
+          };
+        }
+      } else {
+        results.apis.gemini = {
+          status: 'not_configured',
+          configured: false,
+          working: false
+        };
+      }
+
+      // Calculate overall status
+      const allWorking = Object.values(results.apis).every(api => api.working);
+      const anyWorking = Object.values(results.apis).some(api => api.working);
+
+      results.overall = {
+        status: allWorking ? 'all_working' : (anyWorking ? 'partial' : 'none_working'),
+        workingCount: Object.values(results.apis).filter(api => api.working).length,
+        totalCount: Object.values(results.apis).length
+      };
+
+      return new Response(JSON.stringify(results), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
     // API Info endpoint
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
         version: '4.0',
         capabilities: [
-          'Multiple AI providers (Claude & OpenAI)',
-          'Image analysis and recognition (both providers)',
+          'Multiple AI providers (Claude, OpenAI & Gemini)',
+          'Image analysis and recognition (all providers)',
           'Survey creation and management',
           'Boiler recommendations',
           'Heating calculations',
@@ -1173,6 +1475,13 @@ export default {
             'gpt-4-turbo',
             'gpt-4',
             'gpt-3.5-turbo'
+          ],
+          gemini: [
+            'gemini-2.0-flash-exp',
+            'gemini-exp-1206',
+            'gemini-2.0-flash-thinking-exp-01-21',
+            'gemini-1.5-pro',
+            'gemini-1.5-flash'
           ]
         },
         endpoints: {
