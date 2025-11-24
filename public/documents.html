@@ -40,18 +40,27 @@
             font-size: 28px;
         }
 
+        .header-nav {
+            display: flex;
+            gap: 12px;
+        }
+
         .header a {
             color: white;
             text-decoration: none;
             padding: 8px 16px;
-            border: 2px solid white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
             border-radius: 8px;
             transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.2);
+            font-size: 14px;
+            font-weight: 600;
         }
 
         .header a:hover {
-            background: white;
-            color: #667eea;
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
         }
 
         .upload-section {
@@ -265,7 +274,10 @@
     <div class="container">
         <div class="header">
             <h1>📄 Document Manager</h1>
-            <a href="/">← Back to Chat</a>
+            <div class="header-nav">
+                <a href="/">💬 Chat</a>
+                <a href="/api-status.html">🔌 API Status</a>
+            </div>
         </div>
 
         <div class="upload-section">
