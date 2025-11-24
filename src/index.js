@@ -636,7 +636,7 @@ export default {
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { message, images = [], conversationHistory = [] } = body;
+        const { message, images = [], conversationHistory = [], model = 'claude-sonnet-4-5-20250929' } = body;
 
         // Validate required fields
         if (!message || (typeof message !== 'string' && !Array.isArray(message))) {
@@ -647,6 +647,17 @@ export default {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
+
+        // Validate model
+        const allowedModels = [
+          'claude-sonnet-4-5-20250929',
+          'claude-3-5-sonnet-20241022',
+          'claude-opus-4-20250514',
+          'claude-3-7-sonnet-20250219',
+          'claude-3-haiku-20240307'
+        ];
+
+        const selectedModel = allowedModels.includes(model) ? model : 'claude-sonnet-4-5-20250929';
 
         // Initialize Anthropic client
         const anthropic = new Anthropic({
@@ -716,9 +727,9 @@ export default {
             while (iteration < maxIterations) {
               iteration++;
 
-              // Use streaming API
+              // Use streaming API with selected model
               const stream = await anthropic.messages.stream({
-                model: 'claude-sonnet-4-5-20250929',
+                model: selectedModel,
                 max_tokens: 4096,
                 system: systemPromptBlocks,
                 messages: messages,
@@ -987,8 +998,9 @@ export default {
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
-        version: '3.0',
+        version: '3.1',
         capabilities: [
+          'Multiple Claude model support (Sonnet, Opus, Haiku)',
           'Image analysis and recognition',
           'Survey creation and management',
           'Boiler recommendations',
@@ -997,6 +1009,13 @@ export default {
           'Cost estimation',
           'Model comparison',
           'Document search with FTS'
+        ],
+        availableModels: [
+          'claude-sonnet-4-5-20250929',
+          'claude-3-5-sonnet-20241022',
+          'claude-opus-4-20250514',
+          'claude-3-7-sonnet-20250219',
+          'claude-3-haiku-20240307'
         ],
         endpoints: {
           '/': 'GET - Chat Interface',
