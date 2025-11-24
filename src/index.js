@@ -648,8 +648,8 @@ export default {
           });
         }
 
-        // Validate model
-        const allowedModels = [
+        // Validate model and determine provider
+        const claudeModels = [
           'claude-sonnet-4-5-20250929',
           'claude-3-5-sonnet-20241022',
           'claude-opus-4-20250514',
@@ -657,231 +657,33 @@ export default {
           'claude-3-haiku-20240307'
         ];
 
-        const selectedModel = allowedModels.includes(model) ? model : 'claude-sonnet-4-5-20250929';
-
-        // Initialize Anthropic client
-        const anthropic = new Anthropic({
-          apiKey: env.ANTHROPIC_API_KEY,
-        });
-
-        // Use core system prompt WITH PROMPT CACHING
-        // Using cache_control to cache the large system prompt reduces latency significantly
-        const systemPromptBlocks = [
-          {
-            type: 'text',
-            text: CORE_SYSTEM_PROMPT,
-            cache_control: { type: 'ephemeral' }
-          }
+        const openaiModels = [
+          'gpt-4o',
+          'gpt-4o-mini',
+          'gpt-4-turbo',
+          'gpt-4',
+          'gpt-3.5-turbo'
         ];
 
-        // Build message content - support text + images
-        let messageContent;
-        if (images && images.length > 0) {
-          // Multi-modal message with images
-          messageContent = [];
+        let selectedModel = model;
+        let provider = 'claude';
 
-          // Add images first
-          images.forEach(img => {
-            messageContent.push({
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: img.media_type || 'image/jpeg',
-                data: img.data,
-              }
-            });
-          });
-
-          // Add text
-          messageContent.push({
-            type: 'text',
-            text: message
-          });
+        if (claudeModels.includes(model)) {
+          provider = 'claude';
+        } else if (openaiModels.includes(model)) {
+          provider = 'openai';
         } else {
-          // Text-only message
-          messageContent = message;
+          // Default to Claude Sonnet 4.5
+          selectedModel = 'claude-sonnet-4-5-20250929';
+          provider = 'claude';
         }
 
-        // Build messages array from conversation history
-        let messages = [
-          ...conversationHistory,
-          {
-            role: 'user',
-            content: messageContent,
-          },
-        ];
-
-        // Create a streaming response
-        const { readable, writable } = new TransformStream();
-        const writer = writable.getWriter();
-        const encoder = new TextEncoder();
-
-        // Start async processing
-        (async () => {
-          try {
-            let toolResults = [];
-            const maxIterations = 10;
-            let iteration = 0;
-            let finalResponse = null;
-
-            while (iteration < maxIterations) {
-              iteration++;
-
-              // Use streaming API with selected model
-              const stream = await anthropic.messages.stream({
-                model: selectedModel,
-                max_tokens: 4096,
-                system: systemPromptBlocks,
-                messages: messages,
-                tools: tools,
-              });
-
-              let currentToolUses = [];
-              let textContent = '';
-              let stopReason = null;
-
-              // Process stream events
-              for await (const event of stream) {
-                if (event.type === 'content_block_start') {
-                  if (event.content_block?.type === 'tool_use') {
-                    currentToolUses.push({
-                      id: event.content_block.id,
-                      name: event.content_block.name,
-                      input: {}
-                    });
-                  }
-                } else if (event.type === 'content_block_delta') {
-                  if (event.delta?.type === 'text_delta') {
-                    // Stream text tokens to client
-                    const text = event.delta.text;
-                    textContent += text;
-                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`));
-                  } else if (event.delta?.type === 'input_json_delta') {
-                    // Accumulate tool input
-                    const lastTool = currentToolUses[currentToolUses.length - 1];
-                    if (lastTool) {
-                      lastTool.inputChunk = (lastTool.inputChunk || '') + event.delta.partial_json;
-                    }
-                  }
-                } else if (event.type === 'message_delta') {
-                  stopReason = event.delta?.stop_reason;
-                } else if (event.type === 'message_stop') {
-                  finalResponse = await stream.finalMessage();
-                }
-              }
-
-              // Parse accumulated tool inputs
-              currentToolUses.forEach(tool => {
-                if (tool.inputChunk) {
-                  try {
-                    tool.input = JSON.parse(tool.inputChunk);
-                  } catch (e) {
-                    console.error('Failed to parse tool input:', e);
-                    tool.input = {};
-                  }
-                }
-              });
-
-              // Check if we need to handle tool calls
-              if (stopReason === 'tool_use' && currentToolUses.length > 0) {
-                // Notify client that tools are being executed
-                await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'tool_execution', tools: currentToolUses.map(t => t.name) })}\n\n`));
-
-                // Execute tools
-                const toolResultsForThisTurn = await Promise.all(
-                  currentToolUses.map(async (toolUse) => {
-                    try {
-                      const handler = toolHandlers[toolUse.name];
-                      if (!handler) {
-                        return {
-                          type: 'tool_result',
-                          tool_use_id: toolUse.id,
-                          content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
-                        };
-                      }
-
-                      const result = await handler(toolUse.input, documentManager, env);
-                      return {
-                        type: 'tool_result',
-                        tool_use_id: toolUse.id,
-                        content: JSON.stringify(result)
-                      };
-                    } catch (error) {
-                      return {
-                        type: 'tool_result',
-                        tool_use_id: toolUse.id,
-                        content: JSON.stringify({ error: error.message })
-                      };
-                    }
-                  })
-                );
-
-                // Build proper content blocks for assistant message
-                const assistantContent = [];
-                if (textContent) {
-                  assistantContent.push({ type: 'text', text: textContent });
-                }
-                currentToolUses.forEach(tool => {
-                  assistantContent.push({
-                    type: 'tool_use',
-                    id: tool.id,
-                    name: tool.name,
-                    input: tool.input
-                  });
-                });
-
-                // Add to messages
-                messages.push({
-                  role: 'assistant',
-                  content: assistantContent
-                });
-
-                messages.push({
-                  role: 'user',
-                  content: toolResultsForThisTurn
-                });
-
-                toolResults.push(...toolResultsForThisTurn);
-
-                // Continue loop for next iteration
-              } else {
-                // Got final text response, break
-                break;
-              }
-            }
-
-            // Send completion signal with metadata
-            await writer.write(encoder.encode(`data: ${JSON.stringify({
-              type: 'done',
-              ttsVoice: DEFAULT_TTS_VOICE,
-              toolsUsed: toolResults.length > 0,
-              usage: finalResponse ? {
-                inputTokens: finalResponse.usage.input_tokens,
-                outputTokens: finalResponse.usage.output_tokens,
-                cacheCreationInputTokens: finalResponse.usage.cache_creation_input_tokens || 0,
-                cacheReadInputTokens: finalResponse.usage.cache_read_input_tokens || 0,
-              } : {}
-            })}\n\n`));
-
-            await writer.close();
-
-          } catch (error) {
-            console.error('Streaming error:', error);
-            await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
-            await writer.close();
-          }
-        })();
-
-        // Return streaming response
-        return new Response(readable, {
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          },
-        });
-
+        // Route to appropriate provider
+        if (provider === 'openai') {
+          return await handleOpenAIRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
+        } else {
+          return await handleClaudeRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
+        }
       } catch (error) {
         console.error('Agent error:', error);
         return new Response(JSON.stringify({
@@ -893,6 +695,352 @@ export default {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+    }
+
+    // Helper function for Claude requests
+    async function handleClaudeRequest(env, message, images, conversationHistory, selectedModel, corsHeaders) {
+      // Initialize Anthropic client
+      const anthropic = new Anthropic({
+        apiKey: env.ANTHROPIC_API_KEY,
+      });
+
+      // Use core system prompt WITH PROMPT CACHING
+      const systemPromptBlocks = [
+        {
+          type: 'text',
+          text: CORE_SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' }
+        }
+      ];
+
+      // Build message content - support text + images
+      let messageContent;
+      if (images && images.length > 0) {
+        messageContent = [];
+        images.forEach(img => {
+          messageContent.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: img.media_type || 'image/jpeg',
+              data: img.data,
+            }
+          });
+        });
+        messageContent.push({
+          type: 'text',
+          text: message
+        });
+      } else {
+        messageContent = message;
+      }
+
+      // Build messages array from conversation history
+      let messages = [
+        ...conversationHistory,
+        {
+          role: 'user',
+          content: messageContent,
+        },
+      ];
+
+      // Create a streaming response
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Start async processing
+      (async () => {
+        try {
+          let toolResults = [];
+          const maxIterations = 10;
+          let iteration = 0;
+          let finalResponse = null;
+
+          while (iteration < maxIterations) {
+            iteration++;
+
+            // Use streaming API with selected model
+            const stream = await anthropic.messages.stream({
+              model: selectedModel,
+              max_tokens: 4096,
+              system: systemPromptBlocks,
+              messages: messages,
+              tools: tools,
+            });
+
+            let currentToolUses = [];
+            let textContent = '';
+            let stopReason = null;
+
+            // Process stream events
+            for await (const event of stream) {
+              if (event.type === 'content_block_start') {
+                if (event.content_block?.type === 'tool_use') {
+                  currentToolUses.push({
+                    id: event.content_block.id,
+                    name: event.content_block.name,
+                    input: {}
+                  });
+                }
+              } else if (event.type === 'content_block_delta') {
+                if (event.delta?.type === 'text_delta') {
+                  // Stream text tokens to client
+                  const text = event.delta.text;
+                  textContent += text;
+                  await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`));
+                } else if (event.delta?.type === 'input_json_delta') {
+                  // Accumulate tool input
+                  const lastTool = currentToolUses[currentToolUses.length - 1];
+                  if (lastTool) {
+                    lastTool.inputChunk = (lastTool.inputChunk || '') + event.delta.partial_json;
+                  }
+                }
+              } else if (event.type === 'message_delta') {
+                stopReason = event.delta?.stop_reason;
+              } else if (event.type === 'message_stop') {
+                finalResponse = await stream.finalMessage();
+              }
+            }
+
+            // Parse accumulated tool inputs
+            currentToolUses.forEach(tool => {
+              if (tool.inputChunk) {
+                try {
+                  tool.input = JSON.parse(tool.inputChunk);
+                } catch (e) {
+                  console.error('Failed to parse tool input:', e);
+                  tool.input = {};
+                }
+              }
+            });
+
+            // Check if we need to handle tool calls
+            if (stopReason === 'tool_use' && currentToolUses.length > 0) {
+              // Notify client that tools are being executed
+              await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'tool_execution', tools: currentToolUses.map(t => t.name) })}\n\n`));
+
+              // Execute tools
+              const toolResultsForThisTurn = await Promise.all(
+                currentToolUses.map(async (toolUse) => {
+                  try {
+                    const handler = toolHandlers[toolUse.name];
+                    if (!handler) {
+                      return {
+                        type: 'tool_result',
+                        tool_use_id: toolUse.id,
+                        content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
+                      };
+                    }
+
+                    const result = await handler(toolUse.input, documentManager, env);
+                    return {
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify(result)
+                    };
+                  } catch (error) {
+                    return {
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify({ error: error.message })
+                    };
+                  }
+                })
+              );
+
+              // Build proper content blocks for assistant message
+              const assistantContent = [];
+              if (textContent) {
+                assistantContent.push({ type: 'text', text: textContent });
+              }
+              currentToolUses.forEach(tool => {
+                assistantContent.push({
+                  type: 'tool_use',
+                  id: tool.id,
+                  name: tool.name,
+                  input: tool.input
+                });
+              });
+
+              // Add to messages
+              messages.push({
+                role: 'assistant',
+                content: assistantContent
+              });
+
+              messages.push({
+                role: 'user',
+                content: toolResultsForThisTurn
+              });
+
+              toolResults.push(...toolResultsForThisTurn);
+
+              // Continue loop for next iteration
+            } else {
+              // Got final text response, break
+              break;
+            }
+          }
+
+          // Send completion signal with metadata
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            ttsVoice: DEFAULT_TTS_VOICE,
+            toolsUsed: toolResults.length > 0,
+            usage: finalResponse ? {
+              inputTokens: finalResponse.usage.input_tokens,
+              outputTokens: finalResponse.usage.output_tokens,
+              cacheCreationInputTokens: finalResponse.usage.cache_creation_input_tokens || 0,
+              cacheReadInputTokens: finalResponse.usage.cache_read_input_tokens || 0,
+            } : {}
+          })}\n\n`));
+
+          await writer.close();
+
+        } catch (error) {
+          console.error('Streaming error:', error);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+          await writer.close();
+        }
+      })();
+
+      // Return streaming response
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Helper function for OpenAI requests
+    async function handleOpenAIRequest(env, message, images, conversationHistory, selectedModel, corsHeaders) {
+      // Build messages array for OpenAI
+      let openaiMessages = [
+        {
+          role: 'system',
+          content: CORE_SYSTEM_PROMPT
+        },
+        ...conversationHistory
+      ];
+
+      // Build message content - OpenAI format
+      let userMessage;
+      if (images && images.length > 0) {
+        userMessage = {
+          role: 'user',
+          content: []
+        };
+
+        // Add images
+        images.forEach(img => {
+          userMessage.content.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${img.media_type};base64,${img.data}`
+            }
+          });
+        });
+
+        // Add text
+        userMessage.content.push({
+          type: 'text',
+          text: message
+        });
+      } else {
+        userMessage = {
+          role: 'user',
+          content: message
+        };
+      }
+
+      openaiMessages.push(userMessage);
+
+      // Create a streaming response
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Start async processing
+      (async () => {
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: selectedModel,
+              messages: openaiMessages,
+              stream: true,
+              max_tokens: 4096,
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`OpenAI API error: ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') {
+                  break;
+                }
+
+                try {
+                  const parsed = JSON.parse(data);
+                  const delta = parsed.choices?.[0]?.delta?.content;
+
+                  if (delta) {
+                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`));
+                  }
+                } catch (e) {
+                  // Skip parse errors
+                }
+              }
+            }
+          }
+
+          // Send completion signal
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            ttsVoice: DEFAULT_TTS_VOICE,
+            toolsUsed: false
+          })}\n\n`));
+
+          await writer.close();
+
+        } catch (error) {
+          console.error('OpenAI streaming error:', error);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+          await writer.close();
+        }
+      })();
+
+      // Return streaming response
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
     }
 
     // Voice endpoint
@@ -998,25 +1146,35 @@ export default {
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
-        version: '3.1',
+        version: '4.0',
         capabilities: [
-          'Multiple Claude model support (Sonnet, Opus, Haiku)',
-          'Image analysis and recognition',
+          'Multiple AI providers (Claude & OpenAI)',
+          'Image analysis and recognition (both providers)',
           'Survey creation and management',
           'Boiler recommendations',
           'Heating calculations',
           'Issue diagnosis',
           'Cost estimation',
           'Model comparison',
-          'Document search with FTS'
+          'Document search with FTS',
+          'Streaming responses for both providers'
         ],
-        availableModels: [
-          'claude-sonnet-4-5-20250929',
-          'claude-3-5-sonnet-20241022',
-          'claude-opus-4-20250514',
-          'claude-3-7-sonnet-20250219',
-          'claude-3-haiku-20240307'
-        ],
+        availableModels: {
+          claude: [
+            'claude-sonnet-4-5-20250929',
+            'claude-3-5-sonnet-20241022',
+            'claude-opus-4-20250514',
+            'claude-3-7-sonnet-20250219',
+            'claude-3-haiku-20240307'
+          ],
+          openai: [
+            'gpt-4o',
+            'gpt-4o-mini',
+            'gpt-4-turbo',
+            'gpt-4',
+            'gpt-3.5-turbo'
+          ]
+        },
         endpoints: {
           '/': 'GET - Chat Interface',
           '/documents.html': 'GET - Document Manager',
