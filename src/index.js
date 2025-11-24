@@ -207,6 +207,7 @@ export default {
       }
 
       try {
+        const MAX_UPLOAD_SIZE_BYTES = 24 * 1024 * 1024; // 24 MB
         const formData = await request.formData();
         const category = formData.get('category') || 'general';
 
@@ -250,6 +251,18 @@ export default {
             error: 'No file provided'
           }), {
             status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const oversizedFile = files.find(file => file.size > MAX_UPLOAD_SIZE_BYTES);
+        if (oversizedFile) {
+          return new Response(JSON.stringify({
+            ok: false,
+            error: `File too large (max ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))}MB)`,
+            details: `${oversizedFile.name || 'File'} exceeds the maximum upload size`
+          }), {
+            status: 413,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }

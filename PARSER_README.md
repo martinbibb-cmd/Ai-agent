@@ -392,7 +392,7 @@ All text is automatically sanitized for SQL compatibility:
 
 ### Memory Usage
 - PDFs are loaded entirely into memory
-- Large files (>10MB) may cause Worker timeouts
+- Large files (>24MB) may cause Worker timeouts
 - Consider splitting very large documents
 
 ### Processing Time

@@ -272,7 +272,7 @@
             <h2 style="margin-bottom: 16px;">Upload New Document</h2>
             <div class="upload-area" id="uploadArea">
                 <p style="font-size: 18px; margin-bottom: 8px;">📁 Drop PDF files here or click to browse</p>
-                <p style="color: #666; font-size: 14px;">Supports PDF files up to 10MB each (multiple allowed)</p>
+                <p style="color: #666; font-size: 14px;">Supports PDF files up to 24MB each (multiple allowed)</p>
                 <input type="file" id="fileInput" accept="application/pdf" multiple style="display: none;">
             </div>
 
@@ -416,8 +416,8 @@
                     showStatus(`Only PDF files are supported (skipped ${file.name})`, 'error');
                     return false;
                 }
-                if (file.size > 10 * 1024 * 1024) {
-                    showStatus(`File ${file.name} must be less than 10MB`, 'error');
+                if (file.size > 24 * 1024 * 1024) {
+                    showStatus(`File ${file.name} must be less than 24MB`, 'error');
                     return false;
                 }
                 return true;

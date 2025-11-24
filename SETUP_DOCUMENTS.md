@@ -85,7 +85,7 @@ npm run deploy
 POST /documents/upload
 
 # Form data
-- file: PDF file (max 10MB)
+- file: PDF file (max 24MB)
 - category: Category (general, manuals, specs, guides, regulations)
 - tags: JSON array of tags
 ```
@@ -151,7 +151,7 @@ Lists all available documents.
 
 ### "Failed to parse PDF"
 - Ensure file is a valid PDF
-- Check file size is under 10MB
+- Check file size is under 24MB
 - Try re-uploading the file
 
 ### Search not returning results
