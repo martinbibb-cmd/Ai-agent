@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Agent - Multi-Persona Assistant</title>
+    <title>AI Agent - Boiler & Heating Assistant</title>
     <style>
         * {
             margin: 0;
@@ -72,48 +72,6 @@
             transform: translateY(-2px);
         }
 
-        .persona-selector {
-            padding: 24px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
-        }
-
-        .persona-selector h2 {
-            font-size: 16px;
-            margin-bottom: 12px;
-            color: #333;
-        }
-
-        .persona-buttons {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px;
-        }
-
-        .persona-btn {
-            padding: 12px 16px;
-            border: 2px solid #ddd;
-            background: white;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-size: 14px;
-            font-weight: 500;
-            color: #333;
-        }
-
-        .persona-btn:hover {
-            border-color: #667eea;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
-        }
-
-        .persona-btn.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-color: transparent;
-        }
-
         .chat-container {
             height: 500px;
             overflow-y: auto;
@@ -156,6 +114,26 @@
             color: white;
         }
 
+        .message-images {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .message-image {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 8px;
+            object-fit: cover;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .message-image:hover {
+            transform: scale(1.05);
+        }
+
         .message-actions {
             display: flex;
             gap: 8px;
@@ -193,6 +171,37 @@
             content: '🔊';
         }
 
+        .copy-btn {
+            padding: 4px 12px;
+            background: #10b981;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .copy-btn:hover {
+            background: #059669;
+            transform: translateY(-1px);
+        }
+
+        .copy-btn.copied {
+            background: #6366f1;
+        }
+
+        .copy-btn::before {
+            content: '📋';
+        }
+
+        .copy-btn.copied::before {
+            content: '✓';
+        }
+
         .message-label {
             font-size: 11px;
             color: #888;
@@ -204,12 +213,23 @@
             padding: 24px;
             background: #f8f9fa;
             border-top: 1px solid #e0e0e0;
-            display: flex;
-            gap: 12px;
         }
 
-        .input-container input {
+        .input-row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper {
             flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-container input[type="text"] {
+            width: 100%;
             padding: 12px 16px;
             border: 2px solid #ddd;
             border-radius: 8px;
@@ -218,11 +238,72 @@
             transition: border-color 0.2s;
         }
 
-        .input-container input:focus {
+        .input-container input[type="text"]:focus {
             border-color: #667eea;
         }
 
-        .input-container button {
+        .file-input-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: white;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #666;
+            transition: all 0.2s;
+        }
+
+        .file-input-label:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .file-input-label input[type="file"] {
+            display: none;
+        }
+
+        .image-preview-container {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .image-preview {
+            position: relative;
+            width: 80px;
+            height: 80px;
+        }
+
+        .image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+        }
+
+        .image-preview-remove {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #ef4444;
+            color: white;
+            border: 2px solid white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .send-btn {
             padding: 12px 24px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -232,14 +313,15 @@
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
+            white-space: nowrap;
         }
 
-        .input-container button:hover:not(:disabled) {
+        .send-btn:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
 
-        .input-container button:disabled {
+        .send-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
         }
@@ -256,17 +338,62 @@
             display: block;
         }
 
-        .current-persona-info {
-            margin-top: 12px;
-            padding: 12px;
-            background: white;
-            border-radius: 8px;
-            font-size: 13px;
-            color: #666;
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
         }
 
-        .current-persona-info strong {
-            color: #667eea;
+        .image-modal.active {
+            display: flex;
+        }
+
+        .image-modal img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+
+        .settings-bar {
+            padding: 16px 24px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .settings-bar label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .settings-bar select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+
+        .settings-bar select:focus {
+            border-color: #667eea;
+        }
+
+        .settings-bar select:hover {
+            border-color: #667eea;
         }
     </style>
 </head>
@@ -277,25 +404,35 @@
                 <a href="/documents.html" class="nav-btn">📄 Documents</a>
             </div>
             <h1>🤖 AI Agent Assistant</h1>
-            <p>Multi-persona support for surveys and boiler inquiries</p>
+            <p>Expert help with surveys, boilers, and heating systems</p>
         </div>
 
-        <div class="persona-selector">
-            <h2>Select Your Assistant Persona:</h2>
-            <div class="persona-buttons" id="personaButtons">
-                <!-- Personas will be loaded here -->
-            </div>
-            <div class="current-persona-info" id="personaInfo">
-                Loading personas...
-            </div>
+        <div class="settings-bar">
+            <label for="modelSelect">🤖 AI Model:</label>
+            <select id="modelSelect">
+                <optgroup label="Claude (Anthropic)">
+                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 (Recommended)</option>
+                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                    <option value="claude-opus-4-20250514">Claude Opus 4 (Most Capable)</option>
+                    <option value="claude-3-7-sonnet-20250219">Claude 3.7 Sonnet</option>
+                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fastest)</option>
+                </optgroup>
+                <optgroup label="GPT (OpenAI)">
+                    <option value="gpt-4o">GPT-4o (Vision + Fast)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (Cost-Effective)</option>
+                    <option value="gpt-4-turbo">GPT-4 Turbo (Vision)</option>
+                    <option value="gpt-4">GPT-4</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Fastest)</option>
+                </optgroup>
+            </select>
         </div>
 
         <div class="chat-container" id="chatContainer">
             <div class="message assistant">
-                <div>
-                    <div class="message-label">Janet</div>
+                <div class="message-wrapper">
+                    <div class="message-label">Assistant</div>
                     <div class="message-content">
-                        Hello! I'm here to help you with surveys and boiler-related questions. How can I assist you today?
+                        Hello! I'm here to help you with surveys, boiler-related questions, and heating systems. You can also send me pictures of your boiler or heating setup for analysis. How can I assist you today?
                     </div>
                 </div>
             </div>
@@ -304,95 +441,111 @@
         <div class="loading" id="loading">Thinking...</div>
 
         <div class="input-container">
-            <input
-                type="text"
-                id="messageInput"
-                placeholder="Type your message..."
-                autocomplete="off"
-            />
-            <button id="sendButton">Send</button>
+            <div class="input-wrapper">
+                <div class="image-preview-container" id="imagePreviewContainer"></div>
+                <div class="input-row">
+                    <label class="file-input-label">
+                        📷 Add Images
+                        <input type="file" id="imageInput" accept="image/*" multiple>
+                    </label>
+                    <input
+                        type="text"
+                        id="messageInput"
+                        placeholder="Type your message..."
+                        autocomplete="off"
+                    />
+                    <button id="sendButton" class="send-btn">Send</button>
+                </div>
+            </div>
         </div>
     </div>
 
+    <div class="image-modal" id="imageModal">
+        <img id="modalImage" src="" alt="Full size image">
+    </div>
+
     <script>
-        let personas = [];
-        let currentPersona = null;
         let conversationHistory = [];
+        let selectedImages = [];
+        let selectedModel = 'claude-sonnet-4-5-20250929';
         const API_BASE_URL = window.location.origin;
 
-        // Load personas on startup
-        async function loadPersonas() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/data/personas.json`);
-                personas = await response.json();
+        // Model selection
+        document.getElementById('modelSelect').addEventListener('change', (e) => {
+            selectedModel = e.target.value;
+            console.log('Model changed to:', selectedModel);
+        });
 
-                const personaButtons = document.getElementById('personaButtons');
-                personaButtons.innerHTML = '';
+        // Image selection and preview
+        document.getElementById('imageInput').addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
 
-                personas.forEach(persona => {
-                    const button = document.createElement('button');
-                    button.className = `persona-btn ${persona.default ? 'active' : ''}`;
-                    button.textContent = persona.label;
-                    button.onclick = () => selectPersona(persona.id);
-                    personaButtons.appendChild(button);
-
-                    if (persona.default) {
-                        currentPersona = persona;
-                    }
-                });
-
-                updatePersonaInfo();
-            } catch (error) {
-                console.error('Failed to load personas:', error);
-                document.getElementById('personaInfo').textContent = 'Failed to load personas';
+            for (const file of files) {
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const base64Data = event.target.result.split(',')[1];
+                        selectedImages.push({
+                            data: base64Data,
+                            media_type: file.type,
+                            url: event.target.result,
+                            name: file.name
+                        });
+                        updateImagePreviews();
+                    };
+                    reader.readAsDataURL(file);
+                }
             }
-        }
 
-        function selectPersona(personaId) {
-            currentPersona = personas.find(p => p.id === personaId);
+            // Reset input
+            e.target.value = '';
+        });
 
-            // Update button states
-            document.querySelectorAll('.persona-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
+        function updateImagePreviews() {
+            const container = document.getElementById('imagePreviewContainer');
+            container.innerHTML = '';
 
-            // Clear conversation history when switching personas
-            conversationHistory = [];
-
-            // Clear chat (except welcome message)
-            const chatContainer = document.getElementById('chatContainer');
-            chatContainer.innerHTML = `
-                <div class="message assistant">
-                    <div>
-                        <div class="message-label">${currentPersona.label.split(' - ')[0]}</div>
-                        <div class="message-content">
-                            Hello! I'm ${currentPersona.label.split(' - ')[0]}, and I'm here to help you with surveys and boiler-related questions. How can I assist you today?
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            updatePersonaInfo();
-        }
-
-        function updatePersonaInfo() {
-            if (currentPersona) {
-                document.getElementById('personaInfo').innerHTML = `
-                    <strong>Current Persona:</strong> ${currentPersona.label} |
-                    <strong>Voice:</strong> ${currentPersona.voiceHint}
+            selectedImages.forEach((img, index) => {
+                const preview = document.createElement('div');
+                preview.className = 'image-preview';
+                preview.innerHTML = `
+                    <img src="${img.url}" alt="${img.name}">
+                    <div class="image-preview-remove" onclick="removeImage(${index})">×</div>
                 `;
-            }
+                container.appendChild(preview);
+            });
+        }
+
+        function removeImage(index) {
+            selectedImages.splice(index, 1);
+            updateImagePreviews();
+        }
+
+        // Image modal for full-size viewing
+        const imageModal = document.getElementById('imageModal');
+        const modalImage = document.getElementById('modalImage');
+
+        imageModal.addEventListener('click', () => {
+            imageModal.classList.remove('active');
+        });
+
+        function showImageModal(src) {
+            modalImage.src = src;
+            imageModal.classList.add('active');
         }
 
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
 
-            if (!message || !currentPersona) return;
+            if (!message && selectedImages.length === 0) return;
 
-            // Add user message to chat
-            addMessage('user', message, 'You');
+            // Add user message to chat with images
+            addUserMessage(message || 'Analyze these images', selectedImages);
+
+            const imagesToSend = [...selectedImages];
+            selectedImages = [];
+            updateImagePreviews();
             input.value = '';
 
             // Show loading state
@@ -408,10 +561,11 @@
             messageDiv.className = 'message assistant';
             messageDiv.innerHTML = `
                 <div class="message-wrapper">
-                    <div class="message-label">${currentPersona.label.split(' - ')[0]}</div>
+                    <div class="message-label">Assistant</div>
                     <div class="message-content" id="${messageId}"></div>
                     <div class="message-actions">
-                        <button class="speak-btn" onclick="speakMessage('${messageId}', '${currentPersona.label.split(' - ')[0]}')" data-message-id="${messageId}">Read Aloud</button>
+                        <button class="copy-btn" onclick="copyMessage('${messageId}')" data-message-id="${messageId}">Copy</button>
+                        <button class="speak-btn" onclick="speakMessage('${messageId}')" data-message-id="${messageId}">Read Aloud</button>
                     </div>
                 </div>
             `;
@@ -427,11 +581,10 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        personaId: currentPersona.id,
-                        personaSystem: currentPersona.systemPrompt,
-                        voiceHint: currentPersona.voiceHint,
-                        message: message,
+                        message: message || 'Analyze these images',
+                        images: imagesToSend.map(img => ({ data: img.data, media_type: img.media_type })),
                         conversationHistory: conversationHistory,
+                        model: selectedModel,
                     }),
                 });
 
@@ -487,9 +640,12 @@
                 }
 
                 // Update conversation history
+                // Build message content for history
+                let userMessageContent = message || 'Analyze these images';
+
                 conversationHistory.push({
                     role: 'user',
-                    content: message,
+                    content: userMessageContent,
                 });
                 conversationHistory.push({
                     role: 'assistant',
@@ -512,6 +668,32 @@
             }
         }
 
+        function addUserMessage(content, images) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message user';
+
+            let imagesHtml = '';
+            if (images && images.length > 0) {
+                imagesHtml = '<div class="message-images">';
+                images.forEach(img => {
+                    imagesHtml += `<img src="${img.url}" class="message-image" onclick="showImageModal('${img.url}')" alt="User uploaded image">`;
+                });
+                imagesHtml += '</div>';
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-wrapper">
+                    <div class="message-label">You</div>
+                    ${imagesHtml}
+                    <div class="message-content">${content}</div>
+                </div>
+            `;
+
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
         function addMessage(role, content, label) {
             const chatContainer = document.getElementById('chatContainer');
             const messageDiv = document.createElement('div');
@@ -524,16 +706,17 @@
                         <div class="message-label">${label}</div>
                         <div class="message-content">${content}</div>
                         <div class="message-actions">
-                            <button class="speak-btn" onclick="speakMessage('${messageId}', '${label}')" data-message-id="${messageId}">Read Aloud</button>
+                            <button class="copy-btn" onclick="copyMessage('${messageId}')" data-message-id="${messageId}">Copy</button>
+                            <button class="speak-btn" onclick="speakMessage('${messageId}')" data-message-id="${messageId}">Read Aloud</button>
                         </div>
                     </div>
                 `;
-                // Store message content for TTS
+                // Store message content for TTS and copy
                 messageDiv.dataset.messageContent = content;
                 messageDiv.dataset.messageId = messageId;
             } else {
                 messageDiv.innerHTML = `
-                    <div>
+                    <div class="message-wrapper">
                         <div class="message-label">${label}</div>
                         <div class="message-content">${content}</div>
                     </div>
@@ -544,13 +727,40 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
+        // Copy message functionality
+        async function copyMessage(messageId) {
+            const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+            const button = document.querySelector(`.copy-btn[data-message-id="${messageId}"]`);
+
+            if (!messageEl) return;
+
+            const content = messageEl.dataset.messageContent;
+
+            try {
+                await navigator.clipboard.writeText(content);
+
+                // Update button to show success
+                button.classList.add('copied');
+                button.textContent = 'Copied!';
+
+                // Reset after 2 seconds
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                    button.textContent = 'Copy';
+                }, 2000);
+            } catch (error) {
+                console.error('Failed to copy:', error);
+                alert('Failed to copy message to clipboard');
+            }
+        }
+
         // Text-to-Speech functionality using OpenAI TTS API
         let currentAudio = null;
 
-        async function speakMessage(messageId, personaLabel) {
+        async function speakMessage(messageId) {
             // Find the message element
             const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-            const button = document.querySelector(`[data-message-id="${messageId}"]`);
+            const button = document.querySelector(`button[data-message-id="${messageId}"]`);
 
             if (!messageEl) return;
 
@@ -562,7 +772,6 @@
                 currentAudio = null;
                 document.querySelectorAll('.speak-btn').forEach(btn => {
                     btn.classList.remove('speaking');
-                    btn.textContent = 'Read Aloud';
                 });
                 return;
             }
@@ -570,7 +779,6 @@
             try {
                 // Update button state
                 button.classList.add('speaking');
-                button.textContent = 'Loading...';
 
                 // Call the TTS API
                 const response = await fetch(`${API_BASE_URL}/api/tts`, {
@@ -579,8 +787,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        text: content,
-                        personaId: currentPersona.id
+                        text: content
                     })
                 });
 
@@ -596,20 +803,14 @@
                 const audio = new Audio(audioUrl);
                 currentAudio = audio;
 
-                audio.onplay = () => {
-                    button.textContent = 'Stop';
-                };
-
                 audio.onended = () => {
                     button.classList.remove('speaking');
-                    button.textContent = 'Read Aloud';
                     currentAudio = null;
                     URL.revokeObjectURL(audioUrl);
                 };
 
                 audio.onerror = () => {
                     button.classList.remove('speaking');
-                    button.textContent = 'Read Aloud';
                     currentAudio = null;
                     URL.revokeObjectURL(audioUrl);
                     alert('Failed to play audio');
@@ -620,7 +821,6 @@
             } catch (error) {
                 console.error('TTS error:', error);
                 button.classList.remove('speaking');
-                button.textContent = 'Read Aloud';
                 currentAudio = null;
                 alert('Failed to generate speech: ' + error.message);
             }
@@ -629,13 +829,11 @@
         // Event listeners
         document.getElementById('sendButton').addEventListener('click', sendMessage);
         document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
                 sendMessage();
             }
         });
-
-        // Initialize
-        loadPersonas();
     </script>
 </body>
 </html>

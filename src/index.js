@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk';
-import personas from '../data/personas.json';
 import { tools } from './tools/definitions.js';
 import { toolHandlers } from './tools/handlers.js';
 import { DocumentManager } from './documents/manager.js';
@@ -7,19 +6,10 @@ import { ingestDocumentText, ingestRawTextAsDocument } from './documents/textIng
 import { extractTextFromPdfWithOpenAI } from './documents/pdfExtraction.js';
 import { upsertVectorsForDocument, searchChunksSimple, searchChunksVector } from './documents/search.js';
 
-// Voice mapping for TTS
-const VOICE_MAPPING = {
-  'none': 'echo',
-  'janet': 'shimmer',
-  'rocky': 'alloy',
-  'heart_of_gold': 'verse',
-  'marvin': 'botanica',
-  'sonny': 'lumina',
-  'kiss': 'echo',
-  'r2d2': 'fable'
-};
+// Default TTS voice
+const DEFAULT_TTS_VOICE = 'shimmer';
 
-// Core system prompt shared across all personas
+// Core system prompt
 const CORE_SYSTEM_PROMPT = `You are an advanced AI assistant specialized in helping with surveys and boiler/heating system inquiries for UK homes.
 
 YOUR CAPABILITIES:
@@ -35,6 +25,12 @@ YOUR CAPABILITIES:
 - Answer questions based on uploaded PDF documents
 - Reference specific pages and sections from documents
 - List available documents and their contents
+
+**Image Analysis:**
+- Analyze images of boilers, heating systems, error codes, or installation setups
+- Identify boiler models and components from photos
+- Review installation diagrams and schematics
+- Examine error displays and diagnostic screens
 
 **Boiler & Heating Expertise (UK-focused):**
 - Recommend appropriate boilers based on home size, fuel type, and requirements
@@ -64,11 +60,12 @@ YOUR CAPABILITIES:
 IMPORTANT INSTRUCTIONS:
 1. Use the available tools to provide accurate, data-driven recommendations
 2. Always ask clarifying questions when you need more information
-3. Explain technical concepts in ways appropriate to your persona
+3. Explain technical concepts clearly and concisely
 4. When recommending boilers, consider home size (in m²), budget, and efficiency needs
 5. For troubleshooting, assess safety first - always recommend Gas Safe registered engineer for gas/safety issues
 6. Be thorough but conversational
 7. Use UK metric units in all calculations and recommendations
+8. When users send images, analyze them carefully and provide detailed observations
 
 You have access to specialized tools - use them when appropriate to provide the best assistance.`;
 
@@ -140,15 +137,7 @@ export default {
       ? new DocumentManager(env.DOCUMENTS, env.DB)
       : null;
 
-    // Serve personas.json
-    if (url.pathname === '/data/personas.json') {
-      return new Response(JSON.stringify(personas), {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-        },
-      });
-    }
+    // Personas removed - endpoint no longer available
 
     // Direct text ingestion endpoint
     if (url.pathname === '/documents/text' && request.method === 'POST') {
@@ -647,220 +636,54 @@ export default {
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { personaId, personaSystem, voiceHint, message, conversationHistory = [] } = body;
+        const { message, images = [], conversationHistory = [], model = 'claude-sonnet-4-5-20250929' } = body;
 
         // Validate required fields
-        if (!personaId || !personaSystem || !message) {
+        if (!message || (typeof message !== 'string' && !Array.isArray(message))) {
           return new Response(JSON.stringify({
-            error: 'Missing required fields: personaId, personaSystem, and message are required'
+            error: 'Missing required field: message is required'
           }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
 
-        // Initialize Anthropic client
-        const anthropic = new Anthropic({
-          apiKey: env.ANTHROPIC_API_KEY,
-        });
-
-        // Combine core system prompt with persona system prompt WITH PROMPT CACHING
-        // Using cache_control to cache the large system prompt reduces latency significantly
-        const systemPromptBlocks = [
-          {
-            type: 'text',
-            text: CORE_SYSTEM_PROMPT,
-            cache_control: { type: 'ephemeral' }
-          },
-          {
-            type: 'text',
-            text: `---\n\nPERSONALITY AND COMMUNICATION STYLE:\n${personaSystem}`,
-            cache_control: { type: 'ephemeral' }
-          }
+        // Validate model and determine provider
+        const claudeModels = [
+          'claude-sonnet-4-5-20250929',
+          'claude-3-5-sonnet-20241022',
+          'claude-opus-4-20250514',
+          'claude-3-7-sonnet-20250219',
+          'claude-3-haiku-20240307'
         ];
 
-        // Build messages array from conversation history
-        let messages = [
-          ...conversationHistory,
-          {
-            role: 'user',
-            content: message,
-          },
+        const openaiModels = [
+          'gpt-4o',
+          'gpt-4o-mini',
+          'gpt-4-turbo',
+          'gpt-4',
+          'gpt-3.5-turbo'
         ];
 
-        // Create a streaming response
-        const { readable, writable } = new TransformStream();
-        const writer = writable.getWriter();
-        const encoder = new TextEncoder();
+        let selectedModel = model;
+        let provider = 'claude';
 
-        // Start async processing
-        (async () => {
-          try {
-            let toolResults = [];
-            const maxIterations = 10;
-            let iteration = 0;
-            let finalResponse = null;
+        if (claudeModels.includes(model)) {
+          provider = 'claude';
+        } else if (openaiModels.includes(model)) {
+          provider = 'openai';
+        } else {
+          // Default to Claude Sonnet 4.5
+          selectedModel = 'claude-sonnet-4-5-20250929';
+          provider = 'claude';
+        }
 
-            while (iteration < maxIterations) {
-              iteration++;
-
-              // Use streaming API
-              const stream = await anthropic.messages.stream({
-                model: 'claude-sonnet-4-5-20250929',
-                max_tokens: 4096,
-                system: systemPromptBlocks,
-                messages: messages,
-                tools: tools,
-              });
-
-              let currentToolUses = [];
-              let textContent = '';
-              let stopReason = null;
-
-              // Process stream events
-              for await (const event of stream) {
-                if (event.type === 'content_block_start') {
-                  if (event.content_block?.type === 'tool_use') {
-                    currentToolUses.push({
-                      id: event.content_block.id,
-                      name: event.content_block.name,
-                      input: {}
-                    });
-                  }
-                } else if (event.type === 'content_block_delta') {
-                  if (event.delta?.type === 'text_delta') {
-                    // Stream text tokens to client
-                    const text = event.delta.text;
-                    textContent += text;
-                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`));
-                  } else if (event.delta?.type === 'input_json_delta') {
-                    // Accumulate tool input
-                    const lastTool = currentToolUses[currentToolUses.length - 1];
-                    if (lastTool) {
-                      lastTool.inputChunk = (lastTool.inputChunk || '') + event.delta.partial_json;
-                    }
-                  }
-                } else if (event.type === 'message_delta') {
-                  stopReason = event.delta?.stop_reason;
-                } else if (event.type === 'message_stop') {
-                  finalResponse = await stream.finalMessage();
-                }
-              }
-
-              // Parse accumulated tool inputs
-              currentToolUses.forEach(tool => {
-                if (tool.inputChunk) {
-                  try {
-                    tool.input = JSON.parse(tool.inputChunk);
-                  } catch (e) {
-                    console.error('Failed to parse tool input:', e);
-                    tool.input = {};
-                  }
-                }
-              });
-
-              // Check if we need to handle tool calls
-              if (stopReason === 'tool_use' && currentToolUses.length > 0) {
-                // Notify client that tools are being executed
-                await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'tool_execution', tools: currentToolUses.map(t => t.name) })}\n\n`));
-
-                // Execute tools
-                const toolResultsForThisTurn = await Promise.all(
-                  currentToolUses.map(async (toolUse) => {
-                    try {
-                      const handler = toolHandlers[toolUse.name];
-                      if (!handler) {
-                        return {
-                          type: 'tool_result',
-                          tool_use_id: toolUse.id,
-                          content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
-                        };
-                      }
-
-                      const result = await handler(toolUse.input, documentManager, env);
-                      return {
-                        type: 'tool_result',
-                        tool_use_id: toolUse.id,
-                        content: JSON.stringify(result)
-                      };
-                    } catch (error) {
-                      return {
-                        type: 'tool_result',
-                        tool_use_id: toolUse.id,
-                        content: JSON.stringify({ error: error.message })
-                      };
-                    }
-                  })
-                );
-
-                // Build proper content blocks for assistant message
-                const assistantContent = [];
-                if (textContent) {
-                  assistantContent.push({ type: 'text', text: textContent });
-                }
-                currentToolUses.forEach(tool => {
-                  assistantContent.push({
-                    type: 'tool_use',
-                    id: tool.id,
-                    name: tool.name,
-                    input: tool.input
-                  });
-                });
-
-                // Add to messages
-                messages.push({
-                  role: 'assistant',
-                  content: assistantContent
-                });
-
-                messages.push({
-                  role: 'user',
-                  content: toolResultsForThisTurn
-                });
-
-                toolResults.push(...toolResultsForThisTurn);
-
-                // Continue loop for next iteration
-              } else {
-                // Got final text response, break
-                break;
-              }
-            }
-
-            // Send completion signal with metadata
-            await writer.write(encoder.encode(`data: ${JSON.stringify({
-              type: 'done',
-              personaId: personaId,
-              voiceHint: voiceHint,
-              ttsVoice: VOICE_MAPPING[personaId] || 'shimmer',
-              toolsUsed: toolResults.length > 0,
-              usage: finalResponse ? {
-                inputTokens: finalResponse.usage.input_tokens,
-                outputTokens: finalResponse.usage.output_tokens,
-                cacheCreationInputTokens: finalResponse.usage.cache_creation_input_tokens || 0,
-                cacheReadInputTokens: finalResponse.usage.cache_read_input_tokens || 0,
-              } : {}
-            })}\n\n`));
-
-            await writer.close();
-
-          } catch (error) {
-            console.error('Streaming error:', error);
-            await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
-            await writer.close();
-          }
-        })();
-
-        // Return streaming response
-        return new Response(readable, {
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          },
-        });
-
+        // Route to appropriate provider
+        if (provider === 'openai') {
+          return await handleOpenAIRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
+        } else {
+          return await handleClaudeRequest(env, message, images, conversationHistory, selectedModel, corsHeaders);
+        }
       } catch (error) {
         console.error('Agent error:', error);
         return new Response(JSON.stringify({
@@ -874,9 +697,355 @@ export default {
       }
     }
 
-    // Voice mapping endpoint (for reference)
+    // Helper function for Claude requests
+    async function handleClaudeRequest(env, message, images, conversationHistory, selectedModel, corsHeaders) {
+      // Initialize Anthropic client
+      const anthropic = new Anthropic({
+        apiKey: env.ANTHROPIC_API_KEY,
+      });
+
+      // Use core system prompt WITH PROMPT CACHING
+      const systemPromptBlocks = [
+        {
+          type: 'text',
+          text: CORE_SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' }
+        }
+      ];
+
+      // Build message content - support text + images
+      let messageContent;
+      if (images && images.length > 0) {
+        messageContent = [];
+        images.forEach(img => {
+          messageContent.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: img.media_type || 'image/jpeg',
+              data: img.data,
+            }
+          });
+        });
+        messageContent.push({
+          type: 'text',
+          text: message
+        });
+      } else {
+        messageContent = message;
+      }
+
+      // Build messages array from conversation history
+      let messages = [
+        ...conversationHistory,
+        {
+          role: 'user',
+          content: messageContent,
+        },
+      ];
+
+      // Create a streaming response
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Start async processing
+      (async () => {
+        try {
+          let toolResults = [];
+          const maxIterations = 10;
+          let iteration = 0;
+          let finalResponse = null;
+
+          while (iteration < maxIterations) {
+            iteration++;
+
+            // Use streaming API with selected model
+            const stream = await anthropic.messages.stream({
+              model: selectedModel,
+              max_tokens: 4096,
+              system: systemPromptBlocks,
+              messages: messages,
+              tools: tools,
+            });
+
+            let currentToolUses = [];
+            let textContent = '';
+            let stopReason = null;
+
+            // Process stream events
+            for await (const event of stream) {
+              if (event.type === 'content_block_start') {
+                if (event.content_block?.type === 'tool_use') {
+                  currentToolUses.push({
+                    id: event.content_block.id,
+                    name: event.content_block.name,
+                    input: {}
+                  });
+                }
+              } else if (event.type === 'content_block_delta') {
+                if (event.delta?.type === 'text_delta') {
+                  // Stream text tokens to client
+                  const text = event.delta.text;
+                  textContent += text;
+                  await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`));
+                } else if (event.delta?.type === 'input_json_delta') {
+                  // Accumulate tool input
+                  const lastTool = currentToolUses[currentToolUses.length - 1];
+                  if (lastTool) {
+                    lastTool.inputChunk = (lastTool.inputChunk || '') + event.delta.partial_json;
+                  }
+                }
+              } else if (event.type === 'message_delta') {
+                stopReason = event.delta?.stop_reason;
+              } else if (event.type === 'message_stop') {
+                finalResponse = await stream.finalMessage();
+              }
+            }
+
+            // Parse accumulated tool inputs
+            currentToolUses.forEach(tool => {
+              if (tool.inputChunk) {
+                try {
+                  tool.input = JSON.parse(tool.inputChunk);
+                } catch (e) {
+                  console.error('Failed to parse tool input:', e);
+                  tool.input = {};
+                }
+              }
+            });
+
+            // Check if we need to handle tool calls
+            if (stopReason === 'tool_use' && currentToolUses.length > 0) {
+              // Notify client that tools are being executed
+              await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'tool_execution', tools: currentToolUses.map(t => t.name) })}\n\n`));
+
+              // Execute tools
+              const toolResultsForThisTurn = await Promise.all(
+                currentToolUses.map(async (toolUse) => {
+                  try {
+                    const handler = toolHandlers[toolUse.name];
+                    if (!handler) {
+                      return {
+                        type: 'tool_result',
+                        tool_use_id: toolUse.id,
+                        content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
+                      };
+                    }
+
+                    const result = await handler(toolUse.input, documentManager, env);
+                    return {
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify(result)
+                    };
+                  } catch (error) {
+                    return {
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify({ error: error.message })
+                    };
+                  }
+                })
+              );
+
+              // Build proper content blocks for assistant message
+              const assistantContent = [];
+              if (textContent) {
+                assistantContent.push({ type: 'text', text: textContent });
+              }
+              currentToolUses.forEach(tool => {
+                assistantContent.push({
+                  type: 'tool_use',
+                  id: tool.id,
+                  name: tool.name,
+                  input: tool.input
+                });
+              });
+
+              // Add to messages
+              messages.push({
+                role: 'assistant',
+                content: assistantContent
+              });
+
+              messages.push({
+                role: 'user',
+                content: toolResultsForThisTurn
+              });
+
+              toolResults.push(...toolResultsForThisTurn);
+
+              // Continue loop for next iteration
+            } else {
+              // Got final text response, break
+              break;
+            }
+          }
+
+          // Send completion signal with metadata
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            ttsVoice: DEFAULT_TTS_VOICE,
+            toolsUsed: toolResults.length > 0,
+            usage: finalResponse ? {
+              inputTokens: finalResponse.usage.input_tokens,
+              outputTokens: finalResponse.usage.output_tokens,
+              cacheCreationInputTokens: finalResponse.usage.cache_creation_input_tokens || 0,
+              cacheReadInputTokens: finalResponse.usage.cache_read_input_tokens || 0,
+            } : {}
+          })}\n\n`));
+
+          await writer.close();
+
+        } catch (error) {
+          console.error('Streaming error:', error);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+          await writer.close();
+        }
+      })();
+
+      // Return streaming response
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Helper function for OpenAI requests
+    async function handleOpenAIRequest(env, message, images, conversationHistory, selectedModel, corsHeaders) {
+      // Build messages array for OpenAI
+      let openaiMessages = [
+        {
+          role: 'system',
+          content: CORE_SYSTEM_PROMPT
+        },
+        ...conversationHistory
+      ];
+
+      // Build message content - OpenAI format
+      let userMessage;
+      if (images && images.length > 0) {
+        userMessage = {
+          role: 'user',
+          content: []
+        };
+
+        // Add images
+        images.forEach(img => {
+          userMessage.content.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${img.media_type};base64,${img.data}`
+            }
+          });
+        });
+
+        // Add text
+        userMessage.content.push({
+          type: 'text',
+          text: message
+        });
+      } else {
+        userMessage = {
+          role: 'user',
+          content: message
+        };
+      }
+
+      openaiMessages.push(userMessage);
+
+      // Create a streaming response
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Start async processing
+      (async () => {
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: selectedModel,
+              messages: openaiMessages,
+              stream: true,
+              max_tokens: 4096,
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`OpenAI API error: ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') {
+                  break;
+                }
+
+                try {
+                  const parsed = JSON.parse(data);
+                  const delta = parsed.choices?.[0]?.delta?.content;
+
+                  if (delta) {
+                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`));
+                  }
+                } catch (e) {
+                  // Skip parse errors
+                }
+              }
+            }
+          }
+
+          // Send completion signal
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'done',
+            ttsVoice: DEFAULT_TTS_VOICE,
+            toolsUsed: false
+          })}\n\n`));
+
+          await writer.close();
+
+        } catch (error) {
+          console.error('OpenAI streaming error:', error);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+          await writer.close();
+        }
+      })();
+
+      // Return streaming response
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Voice endpoint
     if (url.pathname === '/voices') {
-      return new Response(JSON.stringify(VOICE_MAPPING), {
+      return new Response(JSON.stringify({ voice: DEFAULT_TTS_VOICE }), {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
@@ -888,7 +1057,7 @@ export default {
     if (url.pathname === '/api/tts' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { text, voice = 'shimmer', personaId } = body;
+        const { text, voice = DEFAULT_TTS_VOICE } = body;
 
         if (!text) {
           return new Response(JSON.stringify({
@@ -899,8 +1068,7 @@ export default {
           });
         }
 
-        // Map persona to voice if personaId is provided
-        const selectedVoice = personaId ? (VOICE_MAPPING[personaId] || voice) : voice;
+        const selectedVoice = voice;
 
         // Call OpenAI TTS API
         const openaiResponse = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -965,7 +1133,6 @@ export default {
       return new Response(JSON.stringify({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        personas: personas.length,
         tools: tools.length,
       }), {
         headers: {
@@ -979,23 +1146,40 @@ export default {
     if (url.pathname === '/api' || url.pathname === '/api/info') {
       return new Response(JSON.stringify({
         message: 'AI Agent API with Tool Calling',
-        version: '2.0',
+        version: '4.0',
         capabilities: [
-          'Multi-persona support',
+          'Multiple AI providers (Claude & OpenAI)',
+          'Image analysis and recognition (both providers)',
           'Survey creation and management',
           'Boiler recommendations',
           'Heating calculations',
           'Issue diagnosis',
           'Cost estimation',
           'Model comparison',
-          'Document search with FTS'
+          'Document search with FTS',
+          'Streaming responses for both providers'
         ],
+        availableModels: {
+          claude: [
+            'claude-sonnet-4-5-20250929',
+            'claude-3-5-sonnet-20241022',
+            'claude-opus-4-20250514',
+            'claude-3-7-sonnet-20250219',
+            'claude-3-haiku-20240307'
+          ],
+          openai: [
+            'gpt-4o',
+            'gpt-4o-mini',
+            'gpt-4-turbo',
+            'gpt-4',
+            'gpt-3.5-turbo'
+          ]
+        },
         endpoints: {
           '/': 'GET - Chat Interface',
           '/documents.html': 'GET - Document Manager',
-          '/data/personas.json': 'GET - Get available personas',
           '/documents/text': 'POST - Ingest raw text content as a document',
-          '/agent': 'POST - Send message to agent (with tool calling)',
+          '/agent': 'POST - Send message to agent (with tool calling and images)',
           '/api/documents/upload': 'POST - Upload PDF document',
           '/api/documents': 'GET - List documents',
           '/api/documents/{id}': 'DELETE - Delete document',
@@ -1004,7 +1188,7 @@ export default {
           '/api/documents/fts/health': 'GET - Check FTS index health',
           '/api/documents/fts/migrate': 'POST - Rebuild FTS index',
           '/api/tts': 'POST - Generate AI speech from text',
-          '/voices': 'GET - Get voice mapping',
+          '/voices': 'GET - Get default voice',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
         },
