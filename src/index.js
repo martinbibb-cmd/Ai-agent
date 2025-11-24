@@ -642,7 +642,7 @@ export default {
       }
     }
 
-    // Agent endpoint with tool calling
+    // Agent endpoint with tool calling and streaming
     if (url.pathname === '/agent' && request.method === 'POST') {
       try {
         const body = await request.json();
@@ -663,8 +663,20 @@ export default {
           apiKey: env.ANTHROPIC_API_KEY,
         });
 
-        // Combine core system prompt with persona system prompt
-        const fullSystemPrompt = `${CORE_SYSTEM_PROMPT}\n\n---\n\nPERSONALITY AND COMMUNICATION STYLE:\n${personaSystem}`;
+        // Combine core system prompt with persona system prompt WITH PROMPT CACHING
+        // Using cache_control to cache the large system prompt reduces latency significantly
+        const systemPromptBlocks = [
+          {
+            type: 'text',
+            text: CORE_SYSTEM_PROMPT,
+            cache_control: { type: 'ephemeral' }
+          },
+          {
+            type: 'text',
+            text: `---\n\nPERSONALITY AND COMMUNICATION STYLE:\n${personaSystem}`,
+            cache_control: { type: 'ephemeral' }
+          }
+        ];
 
         // Build messages array from conversation history
         let messages = [
@@ -675,98 +687,176 @@ export default {
           },
         ];
 
-        // Tool calling loop - continue until we get a text response
-        let response;
-        let toolResults = [];
-        const maxIterations = 10; // Prevent infinite loops
-        let iteration = 0;
+        // Create a streaming response
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const encoder = new TextEncoder();
 
-        while (iteration < maxIterations) {
-          iteration++;
+        // Start async processing
+        (async () => {
+          try {
+            let toolResults = [];
+            const maxIterations = 10;
+            let iteration = 0;
+            let finalResponse = null;
 
-          // Call Anthropic API with tools
-          response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-5-20250929',
-            max_tokens: 4096,
-            system: fullSystemPrompt,
-            messages: messages,
-            tools: tools,
-          });
+            while (iteration < maxIterations) {
+              iteration++;
 
-          // Check if Claude wants to use tools
-          if (response.stop_reason === 'tool_use') {
-            // Find all tool use blocks
-            const toolUses = response.content.filter(block => block.type === 'tool_use');
+              // Use streaming API
+              const stream = await anthropic.messages.stream({
+                model: 'claude-sonnet-4-5-20250929',
+                max_tokens: 4096,
+                system: systemPromptBlocks,
+                messages: messages,
+                tools: tools,
+              });
 
-            // Execute each tool
-            const toolResultsForThisTurn = await Promise.all(
-              toolUses.map(async (toolUse) => {
-                try {
-                  const handler = toolHandlers[toolUse.name];
-                  if (!handler) {
-                    return {
-                      type: 'tool_result',
-                      tool_use_id: toolUse.id,
-                      content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
-                    };
+              let currentToolUses = [];
+              let textContent = '';
+              let stopReason = null;
+
+              // Process stream events
+              for await (const event of stream) {
+                if (event.type === 'content_block_start') {
+                  if (event.content_block?.type === 'tool_use') {
+                    currentToolUses.push({
+                      id: event.content_block.id,
+                      name: event.content_block.name,
+                      input: {}
+                    });
                   }
-
-                  // Pass documentManager to document-related tools
-                  const result = await handler(toolUse.input, documentManager, env);
-                  return {
-                    type: 'tool_result',
-                    tool_use_id: toolUse.id,
-                    content: JSON.stringify(result)
-                  };
-                } catch (error) {
-                  return {
-                    type: 'tool_result',
-                    tool_use_id: toolUse.id,
-                    content: JSON.stringify({ error: error.message })
-                  };
+                } else if (event.type === 'content_block_delta') {
+                  if (event.delta?.type === 'text_delta') {
+                    // Stream text tokens to client
+                    const text = event.delta.text;
+                    textContent += text;
+                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`));
+                  } else if (event.delta?.type === 'input_json_delta') {
+                    // Accumulate tool input
+                    const lastTool = currentToolUses[currentToolUses.length - 1];
+                    if (lastTool) {
+                      lastTool.inputChunk = (lastTool.inputChunk || '') + event.delta.partial_json;
+                    }
+                  }
+                } else if (event.type === 'message_delta') {
+                  stopReason = event.delta?.stop_reason;
+                } else if (event.type === 'message_stop') {
+                  finalResponse = await stream.finalMessage();
                 }
-              })
-            );
+              }
 
-            // Add assistant's response with tool uses to messages
-            messages.push({
-              role: 'assistant',
-              content: response.content
-            });
+              // Parse accumulated tool inputs
+              currentToolUses.forEach(tool => {
+                if (tool.inputChunk) {
+                  try {
+                    tool.input = JSON.parse(tool.inputChunk);
+                  } catch (e) {
+                    console.error('Failed to parse tool input:', e);
+                    tool.input = {};
+                  }
+                }
+              });
 
-            // Add tool results to messages
-            messages.push({
-              role: 'user',
-              content: toolResultsForThisTurn
-            });
+              // Check if we need to handle tool calls
+              if (stopReason === 'tool_use' && currentToolUses.length > 0) {
+                // Notify client that tools are being executed
+                await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'tool_execution', tools: currentToolUses.map(t => t.name) })}\n\n`));
 
-            toolResults.push(...toolResultsForThisTurn);
+                // Execute tools
+                const toolResultsForThisTurn = await Promise.all(
+                  currentToolUses.map(async (toolUse) => {
+                    try {
+                      const handler = toolHandlers[toolUse.name];
+                      if (!handler) {
+                        return {
+                          type: 'tool_result',
+                          tool_use_id: toolUse.id,
+                          content: JSON.stringify({ error: `Tool ${toolUse.name} not found` })
+                        };
+                      }
 
-            // Continue loop to get Claude's response after tool use
-          } else {
-            // We got a text response, break the loop
-            break;
+                      const result = await handler(toolUse.input, documentManager, env);
+                      return {
+                        type: 'tool_result',
+                        tool_use_id: toolUse.id,
+                        content: JSON.stringify(result)
+                      };
+                    } catch (error) {
+                      return {
+                        type: 'tool_result',
+                        tool_use_id: toolUse.id,
+                        content: JSON.stringify({ error: error.message })
+                      };
+                    }
+                  })
+                );
+
+                // Build proper content blocks for assistant message
+                const assistantContent = [];
+                if (textContent) {
+                  assistantContent.push({ type: 'text', text: textContent });
+                }
+                currentToolUses.forEach(tool => {
+                  assistantContent.push({
+                    type: 'tool_use',
+                    id: tool.id,
+                    name: tool.name,
+                    input: tool.input
+                  });
+                });
+
+                // Add to messages
+                messages.push({
+                  role: 'assistant',
+                  content: assistantContent
+                });
+
+                messages.push({
+                  role: 'user',
+                  content: toolResultsForThisTurn
+                });
+
+                toolResults.push(...toolResultsForThisTurn);
+
+                // Continue loop for next iteration
+              } else {
+                // Got final text response, break
+                break;
+              }
+            }
+
+            // Send completion signal with metadata
+            await writer.write(encoder.encode(`data: ${JSON.stringify({
+              type: 'done',
+              personaId: personaId,
+              voiceHint: voiceHint,
+              ttsVoice: VOICE_MAPPING[personaId] || 'shimmer',
+              toolsUsed: toolResults.length > 0,
+              usage: finalResponse ? {
+                inputTokens: finalResponse.usage.input_tokens,
+                outputTokens: finalResponse.usage.output_tokens,
+                cacheCreationInputTokens: finalResponse.usage.cache_creation_input_tokens || 0,
+                cacheReadInputTokens: finalResponse.usage.cache_read_input_tokens || 0,
+              } : {}
+            })}\n\n`));
+
+            await writer.close();
+
+          } catch (error) {
+            console.error('Streaming error:', error);
+            await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`));
+            await writer.close();
           }
-        }
+        })();
 
-        // Extract the final response text
-        const textBlocks = response.content.filter(block => block.type === 'text');
-        const responseText = textBlocks.map(block => block.text).join('\n\n');
-
-        return new Response(JSON.stringify({
-          response: responseText,
-          personaId: personaId,
-          voiceHint: voiceHint,
-          ttsVoice: VOICE_MAPPING[personaId] || 'shimmer',
-          toolsUsed: toolResults.length > 0,
-          usage: {
-            inputTokens: response.usage.input_tokens,
-            outputTokens: response.usage.output_tokens,
-          },
-        }), {
+        // Return streaming response
+        return new Response(readable, {
           headers: {
             ...corsHeaders,
-            'Content-Type': 'application/json',
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
           },
         });
 
