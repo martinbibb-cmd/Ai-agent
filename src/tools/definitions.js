@@ -220,7 +220,7 @@ export const tools = [
   },
   {
     name: "search_documents",
-    description: "Search uploaded documents (PDFs, manuals, specs) for specific information. Use this when users ask about content from uploaded documents or need specific details from manuals.",
+    description: "PRIMARY INFORMATION SOURCE - Search uploaded documents (PDFs, manuals, specs) for specific information. MUST be used FIRST before providing any technical answers. Use this when users ask about content from uploaded documents or need specific details from manuals.",
     input_schema: {
       type: "object",
       properties: {
@@ -238,7 +238,7 @@ export const tools = [
   },
   {
     name: "doc_search",
-    description: "Searches uploaded manuals, pricebooks and guides for relevant excerpts based on a natural language query.",
+    description: "PRIMARY INFORMATION SOURCE - Searches uploaded manuals, pricebooks and guides for relevant excerpts based on a natural language query. This tool MUST be used FIRST before relying on general knowledge. Always check the database before providing technical answers.",
     input_schema: {
       type: "object",
       properties: {
