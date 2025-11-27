@@ -999,7 +999,7 @@ export default {
       // Start async processing
       (async () => {
         try {
-          const apiUrl = `https://generativelanguage.googleapis.com/v1/models/${selectedModel}:streamGenerateContent?key=${env.GEMINI_API_KEY}`;
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:streamGenerateContent?key=${env.GEMINI_API_KEY}`;
 
           const response = await fetch(apiUrl, {
             method: 'POST',
@@ -1404,7 +1404,7 @@ export default {
       // Test Gemini API
       if (env.GEMINI_API_KEY) {
         try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${env.GEMINI_API_KEY}`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${env.GEMINI_API_KEY}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
