@@ -770,11 +770,12 @@ export default {
         ];
 
         const geminiModels = [
+          'gemini-2.5-flash',
+          'gemini-2.5-pro',
           'gemini-2.0-flash-exp',
           'gemini-exp-1206',
           'gemini-2.0-flash-thinking-exp-01-21',
-          'gemini-1.5-pro-latest',
-          'gemini-1.5-flash-latest'
+          'gemini-1.5-pro-latest'
         ];
 
         let selectedModel = model;
@@ -1483,7 +1484,7 @@ export default {
       // Test Gemini API
       if (env.GEMINI_API_KEY) {
         try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${env.GEMINI_API_KEY}`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1503,7 +1504,7 @@ export default {
               status: 'success',
               configured: true,
               working: true,
-              model: 'gemini-1.5-flash-latest'
+              model: 'gemini-2.5-flash'
             };
           } else {
             const errorData = await response.text();
@@ -1581,11 +1582,12 @@ export default {
             'gpt-3.5-turbo'
           ],
           gemini: [
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
             'gemini-2.0-flash-exp',
             'gemini-exp-1206',
             'gemini-2.0-flash-thinking-exp-01-21',
-            'gemini-1.5-pro-latest',
-            'gemini-1.5-flash-latest'
+            'gemini-1.5-pro-latest'
           ]
         },
         endpoints: {
