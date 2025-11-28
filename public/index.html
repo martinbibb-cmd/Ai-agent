@@ -546,12 +546,20 @@
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
 
-            if (!message && selectedImages.length === 0) return;
+            if (!message) {
+                return;
+            }
 
-            // Add user message to chat with images
-            addUserMessage(message || 'Analyze these images', selectedImages);
+            if (selectedImages.length > 0) {
+                addMessage('assistant', 'Database-only mode does not support image analysis. Please remove images and ask a text question.', 'System');
+                selectedImages = [];
+                updateImagePreviews();
+                return;
+            }
 
-            const imagesToSend = [...selectedImages];
+            // Add user message to chat
+            addUserMessage(message, selectedImages);
+
             selectedImages = [];
             updateImagePreviews();
             input.value = '';
@@ -583,16 +591,14 @@
             let fullResponse = '';
 
             try {
-                const response = await fetch(`${API_BASE_URL}/agent`, {
+                const response = await fetch(`${API_BASE_URL}/db-answer`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        message: message || 'Analyze these images',
-                        images: imagesToSend.map(img => ({ data: img.data, media_type: img.media_type })),
-                        conversationHistory: conversationHistory,
-                        model: selectedModel,
+                        question: message,
+                        limit: 5,
                     }),
                 });
 
@@ -600,56 +606,24 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
-                // Read the streaming response
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
+                const data = await response.json();
                 const messageContent = document.getElementById(messageId);
 
-                loading.classList.remove('active');
+                const sources = Array.isArray(data.sources) ? data.sources : [];
+                const sourcesText = sources.length
+                    ? `\n\nSources:\n${sources.map(src => `- [${src.index}] ${src.title || src.filename || 'Document'}`).join('\n')}`
+                    : '';
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                fullResponse = `${data.answer || "I can't see that in the documents yet."}${sourcesText}`.trim();
+                messageContent.textContent = fullResponse;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
 
-                    // Decode the chunk
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n');
-
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.slice(6));
-
-                                if (data.type === 'text') {
-                                    // Append text token to the message
-                                    fullResponse += data.content;
-                                    messageContent.textContent = fullResponse;
-                                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                                } else if (data.type === 'tool_execution') {
-                                    // Show tool execution status
-                                    loading.textContent = `Using tools: ${data.tools.join(', ')}...`;
-                                    loading.classList.add('active');
-                                } else if (data.type === 'done') {
-                                    // Stream complete
-                                    loading.classList.remove('active');
-                                    loading.textContent = 'Thinking...';
-
-                                    // Store message content for TTS
-                                    messageDiv.dataset.messageContent = fullResponse;
-                                    messageDiv.dataset.messageId = messageId;
-                                } else if (data.type === 'error') {
-                                    throw new Error(data.error);
-                                }
-                            } catch (e) {
-                                console.error('Error parsing SSE data:', e);
-                            }
-                        }
-                    }
-                }
+                messageDiv.dataset.messageContent = fullResponse;
+                messageDiv.dataset.messageId = messageId;
 
                 // Update conversation history
                 // Build message content for history
-                let userMessageContent = message || 'Analyze these images';
+                let userMessageContent = message;
 
                 conversationHistory.push({
                     role: 'user',

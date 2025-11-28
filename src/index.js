@@ -9,6 +9,12 @@ import { upsertVectorsForDocument, searchChunksSimple, searchChunksVector } from
 // Default TTS voice
 const DEFAULT_TTS_VOICE = 'shimmer';
 
+// Database-only system prompt
+const DB_ANSWER_SYSTEM_PROMPT = `You are a technical assistant answering strictly from provided context.
+- Respond ONLY with information contained in the context.
+- If the context does not contain the answer, reply: "I can't see that in the documents yet."
+- Keep responses concise and factual.`;
+
 // Core system prompt
 const CORE_SYSTEM_PROMPT = `You are a technical expert AI assistant specialized in surveys and boiler/heating system inquiries for UK homes. You provide precise, authoritative technical guidance with professional objectivity.
 
@@ -654,6 +660,79 @@ export default {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           },
         );
+      }
+    }
+
+    // Simple database-only answering endpoint
+    if (url.pathname === '/db-answer' && request.method === 'POST') {
+      try {
+        if (!documentManager) {
+          return new Response(JSON.stringify({
+            error: 'Document storage not configured',
+          }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const body = await request.json();
+        const question = (body?.question || '').toString().trim();
+        const limitInput = Number.parseInt(body?.limit ?? '5', 10);
+        const limit = Number.isFinite(limitInput) && limitInput > 0 ? Math.min(limitInput, 10) : 5;
+
+        if (!question) {
+          return new Response(JSON.stringify({ error: "Missing 'question'" }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const searchResults = await documentManager.searchDocuments(question, limit);
+
+        const contextBlocks = searchResults.map((result, index) => {
+          const snippet = (result.snippet || result.content || '')
+            .replace(/<mark>/g, '')
+            .replace(/<\/mark>/g, '')
+            .slice(0, 800);
+
+          return `[#${index + 1}] ${result.filename || 'Document'} (page ${result.page_number ?? '?'})\n${snippet}`;
+        });
+
+        const contextText = contextBlocks.join('\n\n') || '[no results found]';
+
+        const messages = [
+          { role: 'system', content: DB_ANSWER_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Question:\n${question}\n\nContext:\n${contextText}`,
+          },
+        ];
+
+        const answer = await callOpenAI(env, messages);
+
+        const sources = searchResults.map((result, index) => ({
+          index: index + 1,
+          id: result.id,
+          title: result.filename || 'Document',
+          page: result.page_number ?? null,
+        }));
+
+        return new Response(JSON.stringify({
+          answer,
+          sources,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('DB answer error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to answer from database',
+          details: error.message,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
     }
 
@@ -1513,6 +1592,7 @@ export default {
           '/': 'GET - Chat Interface',
           '/documents.html': 'GET - Document Manager',
           '/documents/text': 'POST - Ingest raw text content as a document',
+          '/db-answer': 'POST - Fast database-only question answering',
           '/agent': 'POST - Send message to agent (with tool calling and images)',
           '/api/documents/upload': 'POST - Upload PDF document',
           '/api/documents': 'GET - List documents',
