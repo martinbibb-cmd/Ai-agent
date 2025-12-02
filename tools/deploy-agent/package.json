@@ -1,0 +1,20 @@
+{
+  "name": "deploy-agent",
+  "version": "1.0.0",
+  "description": "Secure deployment agent for NAS/Docker environments",
+  "main": "deploy.js",
+  "type": "module",
+  "scripts": {
+    "start": "node deploy.js",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "deploy",
+    "docker",
+    "nas",
+    "unraid",
+    "ssh"
+  ],
+  "license": "MIT",
+  "dependencies": {}
+}
