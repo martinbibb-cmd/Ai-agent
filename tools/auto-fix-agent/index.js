@@ -459,58 +459,124 @@ ${diff}
 function parseDiffToFileChanges(diff) {
   const changes = [];
   const lines = diff.split('\n');
+  const repoRoot = join(__dirname, '..', '..');
 
   let currentFile = null;
-  let currentContent = [];
-  let inHunk = false;
+  let originalContent = [];
+  let hunks = [];
+  let currentHunk = null;
 
   for (const line of lines) {
     // Match file header: +++ b/path/to/file
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
     if (fileMatch) {
-      // Save previous file if exists
-      if (currentFile && currentContent.length > 0) {
+      // Process previous file if exists
+      if (currentFile && hunks.length > 0) {
+        const newContent = applyHunks(originalContent, hunks);
         changes.push({
           path: currentFile,
-          newContent: currentContent.join('\n')
+          newContent: newContent.join('\n')
         });
       }
 
       currentFile = fileMatch[1];
-      currentContent = [];
-      inHunk = false;
+      hunks = [];
+      currentHunk = null;
 
-      // Try to read the original file content
-      const repoRoot = join(__dirname, '..', '..');
+      // Read the original file content
       const fullPath = join(repoRoot, currentFile);
       if (existsSync(fullPath)) {
-        currentContent = readFileSync(fullPath, 'utf-8').split('\n');
+        originalContent = readFileSync(fullPath, 'utf-8').split('\n');
+      } else {
+        originalContent = [];
       }
       continue;
     }
 
-    // Match hunk header
-    if (line.startsWith('@@')) {
-      inHunk = true;
+    // Match hunk header: @@ -start,count +start,count @@
+    const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (hunkMatch) {
+      currentHunk = {
+        oldStart: parseInt(hunkMatch[1], 10),
+        oldCount: parseInt(hunkMatch[2] || '1', 10),
+        newStart: parseInt(hunkMatch[3], 10),
+        newCount: parseInt(hunkMatch[4] || '1', 10),
+        lines: []
+      };
+      hunks.push(currentHunk);
       continue;
     }
 
-    if (inHunk && currentFile) {
-      // Apply diff changes
-      // This is a simplified implementation
-      // A full implementation would properly parse the hunk headers and apply changes
+    // Process diff lines within a hunk
+    if (currentHunk) {
+      if (line.startsWith('+')) {
+        // Added line
+        currentHunk.lines.push({ type: 'add', content: line.slice(1) });
+      } else if (line.startsWith('-')) {
+        // Removed line
+        currentHunk.lines.push({ type: 'remove', content: line.slice(1) });
+      } else if (line.startsWith(' ') || line === '') {
+        // Context line
+        currentHunk.lines.push({ type: 'context', content: line.slice(1) || '' });
+      }
     }
   }
 
-  // Save last file
-  if (currentFile && currentContent.length > 0) {
+  // Process last file
+  if (currentFile && hunks.length > 0) {
+    const newContent = applyHunks(originalContent, hunks);
     changes.push({
       path: currentFile,
-      newContent: currentContent.join('\n')
+      newContent: newContent.join('\n')
     });
   }
 
   return changes;
+}
+
+/**
+ * Apply hunks to original content
+ * @param {string[]} originalLines - Original file lines
+ * @param {Array} hunks - Array of hunk objects
+ * @returns {string[]} - Modified file lines
+ */
+function applyHunks(originalLines, hunks) {
+  // Work with a copy of the original lines
+  let result = [...originalLines];
+  let offset = 0; // Track line number changes due to insertions/deletions
+
+  for (const hunk of hunks) {
+    const startIdx = hunk.oldStart - 1 + offset; // Convert to 0-based index
+    let currentIdx = startIdx;
+    let linesToRemove = 0;
+    const linesToAdd = [];
+
+    for (const line of hunk.lines) {
+      if (line.type === 'remove') {
+        linesToRemove++;
+      } else if (line.type === 'add') {
+        linesToAdd.push(line.content);
+      } else if (line.type === 'context') {
+        // For context lines, we need to handle accumulated changes
+        if (linesToRemove > 0 || linesToAdd.length > 0) {
+          result.splice(currentIdx, linesToRemove, ...linesToAdd);
+          currentIdx += linesToAdd.length;
+          offset += linesToAdd.length - linesToRemove;
+          linesToRemove = 0;
+          linesToAdd.length = 0;
+        }
+        currentIdx++;
+      }
+    }
+
+    // Apply any remaining changes
+    if (linesToRemove > 0 || linesToAdd.length > 0) {
+      result.splice(currentIdx, linesToRemove, ...linesToAdd);
+      offset += linesToAdd.length - linesToRemove;
+    }
+  }
+
+  return result;
 }
 
 /**
