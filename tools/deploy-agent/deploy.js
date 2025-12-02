@@ -20,7 +20,7 @@
  * - SSH_PRIVATE_KEY: (used by webfactory/ssh-agent in GitHub Actions)
  */
 
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 
 // Configuration (from environment variables)
 const config = {

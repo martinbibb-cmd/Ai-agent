@@ -5,8 +5,7 @@
   "main": "deploy.js",
   "type": "module",
   "scripts": {
-    "start": "node deploy.js",
-    "lint": "eslint ."
+    "start": "node deploy.js"
   },
   "keywords": [
     "deploy",
@@ -15,6 +14,5 @@
     "unraid",
     "ssh"
   ],
-  "license": "MIT",
-  "dependencies": {}
+  "license": "MIT"
 }
