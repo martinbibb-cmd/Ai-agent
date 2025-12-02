@@ -323,6 +323,32 @@ const { patch, provider } = await res.json();
 
 This keeps all LLM API keys centralized in the Cloudflare Worker secrets.
 
+### R2 credential drop-points (super simple)
+
+Follow these three placements and nowhere else:
+
+1) **LLM keys → Cloudflare Worker secrets** (keeps model keys out of GitHub and the NAS)
+- Run: `wrangler secret put OPENAI_API_KEY` (repeat for `GEMINI_API_KEY`, `CLAUDE_API_KEY`)
+- Docs: <https://developers.cloudflare.com/workers/configuration/secrets/>
+
+2) **GitHub PR access → one Action secret**
+- Go to your repo → **Settings → Secrets and variables → Actions → New repository secret**
+- Add `GH_TOKEN_R2` with a repo-scoped token; read it in workflows with `${{ secrets.GH_TOKEN_R2 }}`
+- Docs: <https://docs.github.com/en/actions/security-guides/encrypted-secrets>
+
+3) **NAS deploy → SSH deploy key in Action secrets**
+- Create a limited `deploy` user on your NAS; add the public key to `~deploy/.ssh/authorized_keys`
+- Add these secrets: `R2_DEPLOY_KEY` (private key), `R2_DEPLOY_HOST` (e.g. `main.cloudbibb.uk`), `R2_DEPLOY_USER` (e.g. `deploy`)
+- Deploy step snippet:
+  ```yaml
+  - uses: webfactory/ssh-agent@v0.9.0
+    with:
+      ssh-private-key: ${{ secrets.R2_DEPLOY_KEY }}
+  - run: ssh ${R2_DEPLOY_USER}@${R2_DEPLOY_HOST} 'cd /mnt/user/appdata/hail_mary && git pull && docker compose down && docker compose up -d --build'
+  ```
+
+🚫 **Never** commit .env files or keys to the repo or paste them into chats.
+
 ## Security
 
 - API keys stored as Cloudflare Worker secrets
