@@ -249,9 +249,31 @@ This agent uses **UK metric units**:
 - **Build Tool**: Wrangler 3.0
 - **Architecture**: Serverless with edge compute
 
-## Auto-Fix Agent
+## R2 Auto-Fix System
 
-The repository includes an AI-powered maintenance agent that can automatically propose fixes for errors and build failures.
+The repository includes an AI-powered maintenance system (nicknamed "R2") that can automatically propose fixes for errors and redeploy to your NAS.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         R2 WORKFLOW                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. Error Occurs    2. Run Auto-Fix    3. Review PR    4. Merge     │
+│        │                  │                 │              │         │
+│        ▼                  ▼                 ▼              ▼         │
+│  ┌──────────┐      ┌───────────┐     ┌──────────┐   ┌──────────┐   │
+│  │  Error   │ ──▶  │ Auto-Fix  │ ──▶ │  GitHub  │ ─▶│  Deploy  │   │
+│  │   Log    │      │   Agent   │     │    PR    │   │   Agent  │   │
+│  └──────────┘      └───────────┘     └──────────┘   └──────────┘   │
+│        │                 │                │              │          │
+│        ▼                 ▼                ▼              ▼          │
+│  debug/latest-   LLM (Gemini/     YOU REVIEW        SSH → NAS      │
+│  error.txt       OpenAI/Claude)   THE CHANGES       docker up      │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ### How It Works
 
@@ -259,6 +281,7 @@ The repository includes an AI-powered maintenance agent that can automatically p
 2. **Run the workflow**: Go to **Actions** > **Auto-Fix Agent** > **Run workflow**
 3. **Review the PR**: The agent analyzes the error and creates a PR with proposed fixes
 4. **Merge if correct**: Review and merge the PR to apply the fix
+5. **Auto-deploy**: The deploy agent automatically deploys to your NAS
 
 ### LLM Provider Priority
 
@@ -284,13 +307,32 @@ After merging a fix, you can enable automatic deployment to your NAS:
 - `NAS_USER` - SSH username
 - `NAS_APP_PATH` - Path to app on NAS
 
+Set the repository variable `DEPLOY_ENABLED=true` to enable automatic deployment on merge.
+
+### Alternative: LLM Proxy via Worker
+
+Instead of configuring LLM API keys in GitHub Secrets, you can use the Cloudflare Worker as a proxy. The worker exposes an `/llm` endpoint:
+
+```javascript
+const res = await fetch('https://your-worker.yourdomain.workers.dev/llm', {
+  method: 'POST',
+  body: JSON.stringify({ prompt, files, logs }),
+});
+const { patch, provider } = await res.json();
+```
+
+This keeps all LLM API keys centralized in the Cloudflare Worker secrets.
+
 ## Security
 
-- API key stored as Cloudflare Worker secret
+- API keys stored as Cloudflare Worker secrets
+- GitHub Actions secrets for deployment credentials
 - CORS enabled for cross-origin requests
 - Input validation on all endpoints
 - No sensitive data logged
 - Auto-fix agent never logs API keys or tokens
+- Deploy agent uses SSH key authentication (no passwords)
+- Restricted deploy user with minimal NAS permissions
 
 ## License
 

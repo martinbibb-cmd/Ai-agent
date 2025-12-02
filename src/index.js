@@ -1391,6 +1391,140 @@ export default {
       });
     }
 
+    // LLM endpoint for auto-fix agent (R2)
+    // This allows the auto-fix agent to call LLMs through this worker
+    // instead of requiring API keys directly in GitHub Secrets
+    if (url.pathname === '/llm' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { prompt, files, logs, provider = 'auto' } = body;
+
+        if (!prompt && !logs) {
+          return new Response(JSON.stringify({
+            error: 'Missing required field: prompt or logs is required'
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Build the full prompt from components
+        let fullPrompt = prompt || '';
+        if (logs) {
+          fullPrompt += `\n\n## Error Log\n\n\`\`\`\n${logs}\n\`\`\`\n`;
+        }
+        if (files && typeof files === 'object') {
+          fullPrompt += '\n\n## Relevant Source Files\n\n';
+          for (const [filePath, content] of Object.entries(files)) {
+            fullPrompt += `### ${filePath}\n\n\`\`\`\n${content.slice(0, 5000)}${content.length > 5000 ? '\n... (truncated)' : ''}\n\`\`\`\n\n`;
+          }
+        }
+
+        // Determine which provider to use
+        let selectedProvider = provider;
+        if (provider === 'auto') {
+          // Priority: Gemini → OpenAI → Claude
+          if (env.GEMINI_API_KEY) {
+            selectedProvider = 'gemini';
+          } else if (env.OPENAI_API_KEY) {
+            selectedProvider = 'openai';
+          } else if (env.ANTHROPIC_API_KEY) {
+            selectedProvider = 'claude';
+          } else {
+            return new Response(JSON.stringify({
+              error: 'No LLM API keys configured on this worker'
+            }), {
+              status: 503,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+
+        let response;
+        let providerUsed = selectedProvider;
+
+        // Call the selected provider
+        if (selectedProvider === 'gemini' && env.GEMINI_API_KEY) {
+          const geminiResponse = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: fullPrompt }] }],
+                generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
+              })
+            }
+          );
+
+          if (!geminiResponse.ok) {
+            throw new Error(`Gemini API error: ${geminiResponse.status}`);
+          }
+
+          const data = await geminiResponse.json();
+          response = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else if (selectedProvider === 'openai' && env.OPENAI_API_KEY) {
+          const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o',
+              messages: [{ role: 'user', content: fullPrompt }],
+              temperature: 0.2,
+              max_tokens: 4096
+            })
+          });
+
+          if (!openaiResponse.ok) {
+            throw new Error(`OpenAI API error: ${openaiResponse.status}`);
+          }
+
+          const data = await openaiResponse.json();
+          response = data.choices?.[0]?.message?.content || '';
+        } else if (selectedProvider === 'claude' && env.ANTHROPIC_API_KEY) {
+          const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+          const claudeResponse = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 4096,
+            messages: [{ role: 'user', content: fullPrompt }]
+          });
+          response = claudeResponse.content?.[0]?.text || '';
+        } else {
+          return new Response(JSON.stringify({
+            error: `Provider ${selectedProvider} is not configured`
+          }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Extract diff from response if present
+        const diffMatch = response.match(/```diff\n([\s\S]*?)```/);
+        const patch = diffMatch ? diffMatch[1].trim() : null;
+
+        return new Response(JSON.stringify({
+          response,
+          patch,
+          provider: providerUsed
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('LLM endpoint error:', error);
+        return new Response(JSON.stringify({
+          error: 'Failed to process LLM request',
+          details: error.message
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // API Status endpoint - test all API keys
     if (url.pathname === '/api/status' && request.method === 'GET') {
       const results = {
@@ -1564,7 +1698,8 @@ export default {
           'Cost estimation',
           'Model comparison',
           'Document search with FTS',
-          'Streaming responses for both providers'
+          'Streaming responses for both providers',
+          'LLM proxy for auto-fix agent (R2)'
         ],
         availableModels: {
           claude: [
@@ -1604,9 +1739,11 @@ export default {
           '/api/documents/fts/health': 'GET - Check FTS index health',
           '/api/documents/fts/migrate': 'POST - Rebuild FTS index',
           '/api/tts': 'POST - Generate AI speech from text',
+          '/llm': 'POST - LLM proxy for auto-fix agent (R2)',
           '/voices': 'GET - Get default voice',
           '/tools': 'GET - Get available tools',
           '/health': 'GET - Health check',
+          '/api/status': 'GET - Check API key status for all providers',
         },
       }), {
         headers: {
