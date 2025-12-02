@@ -1,0 +1,21 @@
+{
+  "name": "auto-fix-agent",
+  "version": "1.0.0",
+  "description": "AI-powered maintenance agent that reads error logs and proposes code fixes via PRs",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "ai",
+    "maintenance",
+    "github",
+    "auto-fix"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@octokit/rest": "^21.0.0"
+  }
+}

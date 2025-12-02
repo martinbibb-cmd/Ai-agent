@@ -249,12 +249,48 @@ This agent uses **UK metric units**:
 - **Build Tool**: Wrangler 3.0
 - **Architecture**: Serverless with edge compute
 
+## Auto-Fix Agent
+
+The repository includes an AI-powered maintenance agent that can automatically propose fixes for errors and build failures.
+
+### How It Works
+
+1. **Paste error logs** into `debug/latest-error.txt`
+2. **Run the workflow**: Go to **Actions** > **Auto-Fix Agent** > **Run workflow**
+3. **Review the PR**: The agent analyzes the error and creates a PR with proposed fixes
+4. **Merge if correct**: Review and merge the PR to apply the fix
+
+### LLM Provider Priority
+
+The agent tries providers in this order:
+1. **Gemini** (Google) - Uses `gemini-2.5-flash`
+2. **OpenAI** - Uses `gpt-4o`
+3. **Claude** (Anthropic) - Uses `claude-sonnet-4`
+
+### Required Secrets
+
+Configure these in your repository secrets:
+- `GEMINI_API_KEY` - Google Gemini API key (optional)
+- `OPENAI_API_KEY` - OpenAI API key (optional)
+- `ANTHROPIC_API_KEY` - Anthropic Claude API key (optional)
+
+At least one API key must be configured.
+
+### Optional: Auto-Deploy
+
+After merging a fix, you can enable automatic deployment to your NAS:
+- `NAS_SSH_KEY` - Private SSH key for NAS access
+- `NAS_HOST` - NAS hostname or IP
+- `NAS_USER` - SSH username
+- `NAS_APP_PATH` - Path to app on NAS
+
 ## Security
 
 - API key stored as Cloudflare Worker secret
 - CORS enabled for cross-origin requests
 - Input validation on all endpoints
 - No sensitive data logged
+- Auto-fix agent never logs API keys or tokens
 
 ## License
 

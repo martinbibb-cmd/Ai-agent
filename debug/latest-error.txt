@@ -1,0 +1,13 @@
+# Sample Error Log
+# Replace this file content with your actual error logs
+
+Error: Build failed at 2024-01-15T10:30:00Z
+TypeError: Cannot read property 'undefined' of null
+  at handleRequest (src/index.js:142:15)
+  at processQueue (src/index.js:88:7)
+
+This is a placeholder error log file.
+To use the auto-fix agent:
+1. Replace this content with your actual error/build logs
+2. Go to Actions > Auto-Fix Agent > Run workflow
+3. The agent will analyze the error and propose a fix via PR

@@ -1,0 +1,62 @@
+name: Auto-Fix Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      error_description:
+        description: 'Brief description of the error (optional)'
+        required: false
+        type: string
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tools/auto-fix-agent/package-lock.json
+
+      - name: Install dependencies
+        working-directory: tools/auto-fix-agent
+        run: npm install
+
+      - name: Verify error log exists
+        run: |
+          if [ ! -f debug/latest-error.txt ]; then
+            echo "Error: debug/latest-error.txt not found!"
+            echo "Please add your error log to debug/latest-error.txt before running this workflow."
+            exit 1
+          fi
+          echo "Error log found with $(wc -l < debug/latest-error.txt) lines"
+
+      - name: Run auto-fix agent
+        working-directory: tools/auto-fix-agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # API keys - priority order: Gemini → OpenAI → Claude
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node index.js
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Auto-Fix Agent Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.error_description }}" != "" ]; then
+            echo "**Error Description:** ${{ inputs.error_description }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "Check the PR that was created for the proposed fix." >> $GITHUB_STEP_SUMMARY

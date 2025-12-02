@@ -1,0 +1,75 @@
+name: Deploy to NAS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: 'Skip docker build (just restart containers)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only run if we have NAS deployment configured
+    if: ${{ secrets.NAS_SSH_KEY != '' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.NAS_SSH_KEY }}
+
+      - name: Add NAS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          # Replace with your actual NAS host fingerprint
+          # ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts
+          echo "Skipping known hosts for now - configure NAS_HOST secret"
+
+      - name: Deploy to NAS
+        env:
+          NAS_HOST: ${{ secrets.NAS_HOST }}
+          NAS_USER: ${{ secrets.NAS_USER }}
+          NAS_APP_PATH: ${{ secrets.NAS_APP_PATH }}
+          SKIP_BUILD: ${{ inputs.skip_build }}
+        run: |
+          echo "Deploying to NAS..."
+          
+          # Example deployment script
+          # Uncomment and customize for your setup
+          
+          # ssh $NAS_USER@$NAS_HOST << 'EOF'
+          #   cd $NAS_APP_PATH
+          #   git pull origin main
+          #   if [ "$SKIP_BUILD" != "true" ]; then
+          #     docker compose down
+          #     docker compose up -d --build
+          #   else
+          #     docker compose restart
+          #   fi
+          # EOF
+          
+          echo "⚠️ Deploy is not configured yet"
+          echo "To enable automatic deployment:"
+          echo "1. Add NAS_SSH_KEY secret (private SSH key with access to NAS)"
+          echo "2. Add NAS_HOST secret (NAS hostname or IP)"
+          echo "3. Add NAS_USER secret (SSH username for NAS)"
+          echo "4. Add NAS_APP_PATH secret (path to app on NAS, e.g., /mnt/user/appdata/hail_mary)"
+          echo "5. Uncomment the ssh command above"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Configure NAS secrets to enable automatic deployment." >> $GITHUB_STEP_SUMMARY
