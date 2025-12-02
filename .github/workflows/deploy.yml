@@ -11,6 +11,16 @@ on:
         required: false
         default: false
         type: boolean
+      dry_run:
+        description: 'Dry run mode (show commands without executing)'
+        required: false
+        default: false
+        type: boolean
+
+# Ensure only one deployment runs at a time
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -18,60 +28,160 @@ jobs:
     permissions:
       contents: read
     # Only run if we have NAS deployment configured
-    if: ${{ secrets.NAS_SSH_KEY != '' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ vars.DEPLOY_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check deployment configuration
+        id: check_config
+        run: |
+          echo "Checking deployment configuration..."
+          
+          CONFIGURED=true
+          
+          if [ -z "${{ secrets.NAS_SSH_KEY }}" ]; then
+            echo "⚠️ NAS_SSH_KEY is not configured"
+            CONFIGURED=false
+          else
+            echo "✓ NAS_SSH_KEY is configured"
+          fi
+          
+          if [ -z "${{ secrets.NAS_HOST }}" ]; then
+            echo "⚠️ NAS_HOST is not configured"
+            CONFIGURED=false
+          else
+            echo "✓ NAS_HOST is configured"
+          fi
+          
+          if [ -z "${{ secrets.NAS_USER }}" ]; then
+            echo "⚠️ NAS_USER is not configured"
+            CONFIGURED=false
+          else
+            echo "✓ NAS_USER is configured"
+          fi
+          
+          if [ "$CONFIGURED" = "true" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Setup SSH
+        if: steps.check_config.outputs.configured == 'true'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.NAS_SSH_KEY }}
 
       - name: Add NAS to known hosts
+        if: steps.check_config.outputs.configured == 'true'
         run: |
           mkdir -p ~/.ssh
-          # Replace with your actual NAS host fingerprint
-          # ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts
-          echo "Skipping known hosts for now - configure NAS_HOST secret"
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || echo "Warning: Could not add host to known_hosts"
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy to NAS
+        if: steps.check_config.outputs.configured == 'true'
         env:
           NAS_HOST: ${{ secrets.NAS_HOST }}
           NAS_USER: ${{ secrets.NAS_USER }}
           NAS_APP_PATH: ${{ secrets.NAS_APP_PATH }}
           SKIP_BUILD: ${{ inputs.skip_build }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          echo "Deploying to NAS..."
+          echo "═══════════════════════════════════════"
+          echo "  Deploying to NAS"
+          echo "═══════════════════════════════════════"
+          echo ""
           
-          # Example deployment script
-          # Uncomment and customize for your setup
+          # Default app path if not set
+          APP_PATH="${NAS_APP_PATH:-/mnt/user/appdata/hail_mary}"
           
-          # ssh $NAS_USER@$NAS_HOST << 'EOF'
-          #   cd $NAS_APP_PATH
-          #   git pull origin main
-          #   if [ "$SKIP_BUILD" != "true" ]; then
-          #     docker compose down
-          #     docker compose up -d --build
-          #   else
-          #     docker compose restart
-          #   fi
-          # EOF
+          echo "Target: $NAS_USER@$NAS_HOST"
+          echo "App Path: $APP_PATH"
+          echo "Skip Build: $SKIP_BUILD"
+          echo "Dry Run: $DRY_RUN"
+          echo ""
           
-          echo "⚠️ Deploy is not configured yet"
-          echo "To enable automatic deployment:"
-          echo "1. Add NAS_SSH_KEY secret (private SSH key with access to NAS)"
-          echo "2. Add NAS_HOST secret (NAS hostname or IP)"
-          echo "3. Add NAS_USER secret (SSH username for NAS)"
-          echo "4. Add NAS_APP_PATH secret (path to app on NAS, e.g., /mnt/user/appdata/hail_mary)"
-          echo "5. Uncomment the ssh command above"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 DRY RUN MODE - Commands will be shown but not executed"
+            echo ""
+          fi
+          
+          # Build the deployment commands
+          DEPLOY_SCRIPT="set -e; cd $APP_PATH && git pull origin main"
+          
+          if [ "$SKIP_BUILD" = "true" ]; then
+            DEPLOY_SCRIPT="$DEPLOY_SCRIPT && docker compose down && docker compose up -d"
+          else
+            DEPLOY_SCRIPT="$DEPLOY_SCRIPT && docker compose down && docker compose up -d --build"
+          fi
+          
+          DEPLOY_SCRIPT="$DEPLOY_SCRIPT && docker compose ps"
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Would execute on NAS:"
+            echo "  $DEPLOY_SCRIPT"
+          else
+            echo "→ Connecting to NAS and executing deployment..."
+            ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 $NAS_USER@$NAS_HOST "$DEPLOY_SCRIPT"
+          fi
+          
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "  DEPLOYMENT COMPLETE"
+          echo "═══════════════════════════════════════"
+
+      - name: Show configuration instructions
+        if: steps.check_config.outputs.configured != 'true'
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "  DEPLOYMENT NOT CONFIGURED"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "To enable automatic deployment to your NAS, configure these secrets:"
+          echo ""
+          echo "1. NAS_SSH_KEY: Private SSH key with access to NAS"
+          echo "   - Generate with: ssh-keygen -t ed25519 -C 'github-deploy'"
+          echo "   - Add public key to ~/.ssh/authorized_keys on NAS"
+          echo ""
+          echo "2. NAS_HOST: NAS hostname or IP address"
+          echo "   - Example: 192.168.1.100 or nas.local"
+          echo ""
+          echo "3. NAS_USER: SSH username for NAS"
+          echo "   - Create a restricted user with docker access only"
+          echo ""
+          echo "4. NAS_APP_PATH (optional): Path to app on NAS"
+          echo "   - Default: /mnt/user/appdata/hail_mary"
+          echo ""
+          echo "5. Set repository variable DEPLOY_ENABLED=true to enable on push"
+          echo ""
+          echo "Security recommendations:"
+          echo "- Create a dedicated deploy user with minimal permissions"
+          echo "- Limit SSH access to the app directory only"
+          echo "- Use key-based authentication (no password)"
+          echo ""
 
       - name: Summary
         if: always()
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Configured | ${{ steps.check_config.outputs.configured }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skip Build | ${{ inputs.skip_build || 'false' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | ${{ inputs.dry_run || 'false' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Configure NAS secrets to enable automatic deployment." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check_config.outputs.configured }}" != "true" ]; then
+            echo "⚠️ **Deployment not configured.** See workflow logs for setup instructions." >> $GITHUB_STEP_SUMMARY
+          fi
